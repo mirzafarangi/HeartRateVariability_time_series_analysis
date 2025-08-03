@@ -3,11 +3,8 @@
   "build": {
     "builder": "NIXPACKS"
   },
-  "variables": {
-    "PYTHON_VERSION": "3.11.9"
-  },
   "deploy": {
-    "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120",
+    "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --keepalive 2",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",

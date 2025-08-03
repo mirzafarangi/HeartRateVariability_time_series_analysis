@@ -32,8 +32,9 @@ class DatabaseConfig:
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
     
     def get_connection(self) -> psycopg2.extensions.connection:
-        """Get database connection with proper error handling"""
+        """Get database connection with proper error handling and IPv4 forcing"""
         try:
+            # Force IPv4 connection to avoid Railway IPv6 issues
             conn = psycopg2.connect(
                 host=self.host,
                 database=self.database,
@@ -41,7 +42,11 @@ class DatabaseConfig:
                 password=self.password,
                 port=self.port,
                 cursor_factory=RealDictCursor,
-                connect_timeout=10
+                connect_timeout=30,
+                keepalives_idle=600,
+                keepalives_interval=30,
+                keepalives_count=3,
+                sslmode='require'
             )
             logger.info("Database connection established successfully")
             return conn
