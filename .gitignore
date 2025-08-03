@@ -93,3 +93,4 @@ serviceAccountKey.json
 *.pem
 *.key
 *.crt
+.env*
