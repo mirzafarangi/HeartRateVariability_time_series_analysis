@@ -287,7 +287,7 @@ def upload_session():
                 data['event_id'],
                 data['duration_minutes'],
                 data['recorded_at'],
-                json.dumps(data['rr_intervals']),
+                data['rr_intervals'],  # PostgreSQL DECIMAL[] array
                 len(data['rr_intervals']),
                 'completed',  # Mark as completed since we processed it
                 datetime.now(timezone.utc),
