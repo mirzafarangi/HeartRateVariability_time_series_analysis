@@ -9,10 +9,13 @@ cmds = [
 ]
 
 [phases.build]
-cmds = ['echo "Build complete"']
+cmds = [
+    'echo "Build complete"',
+    'chmod +x start.sh'
+]
 
 [start]
-cmd = '/opt/venv/bin/gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120'
+cmd = './start.sh'
 
 [variables]
 PATH = '/opt/venv/bin:$PATH'
