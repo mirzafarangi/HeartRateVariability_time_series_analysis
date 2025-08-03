@@ -1,9 +1,9 @@
 # HRV Brain API - Scientific Computing Platform
 
-**Version:** 4.0.0 Final  
+**Version:** 4.1.0 Final  
 **Architecture:** Railway + Supabase PostgreSQL  
 **Language:** Python 3.11 + NumPy  
-**Status:** Production Deployed  
+**Status:** Production Deployed + iOS Fixes  
 **API URL:** https://hrv-brain-api-production.up.railway.app  
 **Database:** Supabase PostgreSQL (Transaction Pooler, IPv4-compatible)  
 

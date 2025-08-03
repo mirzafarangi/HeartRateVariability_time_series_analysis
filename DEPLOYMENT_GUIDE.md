@@ -2,9 +2,9 @@
 
 ## ✅ DEPLOYMENT SUCCESSFUL
 
-**Status**: 🎉 **DEPLOYED AND WORKING**  
+**Status**: 🎉 **DEPLOYED AND WORKING + iOS FIXES**  
 **API URL**: https://hrv-brain-api-production.up.railway.app  
-**Version**: 4.0.0 Final  
+**Version**: 4.1.0 Final  
 **Date**: 2025-08-04  
 
 ## 🚀 Overview

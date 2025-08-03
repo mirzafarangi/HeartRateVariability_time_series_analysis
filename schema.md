@@ -1,8 +1,8 @@
 # HRV App Unified Data Schema Architecture
 
-**Version:** 4.0.0 Final  
+**Version:** 4.1.0 Final  
 **Date:** 2025-08-04  
-**Status:** ✅ Production Deployed (Railway + Supabase)  
+**Status:** ✅ Production Deployed (Railway + Supabase + iOS Fixes)  
 **API URL:** https://hrv-brain-api-production.up.railway.app  
 
 This document defines the complete, unified data schema for the HRV iOS App → API → Database pipeline. All components must strictly adhere to this schema for consistency and maintainability.
@@ -578,7 +578,26 @@ failed      → Processing error occurred
   "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
   ```
 
-#### 4. **Database Connection**: IPv4 Compatibility
+#### 4. **Database Schema Migration**: Individual HRV Columns (v4.1.0)
+- **Problem**: Database had `hrv_metrics` JSONB column, but API expected individual columns
+- **Solution**: Added 9 individual HRV metric columns via migration:
+  ```sql
+  ALTER TABLE sessions ADD COLUMN mean_hr NUMERIC(6,2),
+  ADD COLUMN mean_rr NUMERIC(8,2), ADD COLUMN count_rr INTEGER,
+  ADD COLUMN rmssd NUMERIC(8,2), ADD COLUMN sdnn NUMERIC(8,2),
+  ADD COLUMN pnn50 NUMERIC(6,2), ADD COLUMN cv_rr NUMERIC(6,2),
+  ADD COLUMN defa NUMERIC(6,3), ADD COLUMN sd2_sd1 NUMERIC(6,3);
+  ```
+
+#### 5. **iOS JSON Serialization Crash**: Heart Rate Validation
+- **Problem**: Division by zero when heart rate = 0, causing infinite RR intervals and JSON crash
+- **Solution**: Added validation in `RecordingManager.swift`:
+  ```swift
+  guard heartRate > 0 && heartRate <= 300 else { return }
+  guard rrInterval >= 300 && rrInterval <= 2000 && rrInterval.isFinite else { return }
+  ```
+
+#### 6. **Database Connection**: IPv4 Compatibility
 - **Problem**: Railway IPv4-only networking couldn't connect to Supabase Direct Connection
 - **Solution**: Used Supabase Transaction Pooler (port 6543, IPv4-compatible):
   ```
