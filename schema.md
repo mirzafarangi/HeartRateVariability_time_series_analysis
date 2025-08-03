@@ -1,11 +1,29 @@
 # HRV App Unified Data Schema Architecture
 
-**Version:** 4.1.0 Final  
+**Version:** 4.2.0 ULTIMATE  
 **Date:** 2025-08-04  
-**Status:** ✅ Production Deployed (Railway + Supabase + iOS Fixes)  
+**Status:** ✅ Production Deployed (Railway + Supabase + iOS Fixes + Final Schema)  
 **API URL:** https://hrv-brain-api-production.up.railway.app  
+**Database Schema:** `database_schema_final.sql` (Single Source of Truth)  
 
 This document defines the complete, unified data schema for the HRV iOS App → API → Database pipeline. All components must strictly adhere to this schema for consistency and maintainability.
+
+## 🗃️ **COMPREHENSIVE DATABASE SCHEMA**
+
+**⚠️ IMPORTANT:** The complete, production-ready database schema is now consolidated in:
+
+📄 **`database_schema_final.sql`** - Single Source of Truth
+
+This file includes:
+- ✅ All table definitions (profiles, sessions)
+- ✅ Individual HRV metric columns (mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1)
+- ✅ Database functions (get_user_session_statistics, get_recent_user_sessions)
+- ✅ Performance indexes and constraints
+- ✅ Row Level Security (RLS) policies
+- ✅ Triggers and automation
+- ✅ Complete permissions and documentation
+
+**For new deployments:** Use `database_schema_final.sql` only. All previous patch files (migrate_schema.sql, add_missing_functions.sql, fix_function_ambiguity.sql) are now obsolete.
 
 ---
 
