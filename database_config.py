@@ -53,29 +53,62 @@ class DatabaseConfig:
         return f"postgresql://{self.user}:{self.password}@{self.ipv4_host}:{self.port}/{self.database}"
     
     def get_connection(self) -> psycopg2.extensions.connection:
-        """Get database connection with Railway-optimized settings"""
-        try:
-            # Railway-optimized connection parameters to fix IPv6 issues
-            conn = psycopg2.connect(
-                host=self.ipv4_host,  # Use resolved IPv4 address
+        """Get database connection with Railway-optimized settings and retry logic"""
+        connection_attempts = [
+            # Method 1: Direct connection string (Railway-preferred)
+            lambda: psycopg2.connect(
+                self.get_connection_string(),
+                cursor_factory=RealDictCursor,
+                connect_timeout=15,
+                sslmode='require'
+            ),
+            # Method 2: Individual parameters with IPv4 resolution
+            lambda: psycopg2.connect(
+                host=self.ipv4_host,
                 database=self.database,
                 user=self.user,
                 password=self.password,
                 port=self.port,
                 cursor_factory=RealDictCursor,
-                connect_timeout=10,  # Shorter timeout for Railway
-                keepalives_idle=300,  # Reduced for Railway
-                keepalives_interval=10,  # More frequent for Railway
-                keepalives_count=3,
-                sslmode='require',
-                # Force IPv4 to avoid Railway IPv6 connectivity issues
-                options='-c default_transaction_isolation=read_committed'
+                connect_timeout=15,
+                sslmode='require'
+            ),
+            # Method 3: Original hostname as fallback
+            lambda: psycopg2.connect(
+                host=self.host,
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                port=self.port,
+                cursor_factory=RealDictCursor,
+                connect_timeout=15,
+                sslmode='require'
             )
-            logger.info("Database connection established successfully")
-            return conn
-        except psycopg2.Error as e:
-            logger.error(f"Database connection failed: {e}")
-            raise
+        ]
+        
+        last_error = None
+        for i, connect_method in enumerate(connection_attempts, 1):
+            try:
+                logger.info(f"Attempting database connection (method {i}/3)...")
+                conn = connect_method()
+                logger.info("Database connection established successfully")
+                return conn
+            except psycopg2.Error as e:
+                last_error = e
+                logger.warning(f"Connection method {i} failed: {e}")
+                if i < len(connection_attempts):
+                    logger.info(f"Retrying with method {i+1}...")
+                    time.sleep(1)  # Brief delay between attempts
+                continue
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Connection method {i} failed with unexpected error: {e}")
+                continue
+        
+        # All connection methods failed
+        error_msg = f"All database connection methods failed. Last error: {last_error}"
+        logger.error(error_msg)
+        raise psycopg2.Error(error_msg)
     
     def test_connection(self) -> bool:
         """Test database connection"""
