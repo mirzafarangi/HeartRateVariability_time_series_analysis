@@ -65,7 +65,6 @@ temp_*.py
 *.bak
 
 # Deployment
-render.yaml
 *.pid
 
 # Testing

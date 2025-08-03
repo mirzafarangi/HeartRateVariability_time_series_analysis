@@ -1,23 +1,106 @@
-# HRV Brain API - Deployment Guide (Supabase Edition)
+# HRV Brain API - Render Deployment Guide
 
 ## 🚀 Overview
 
-Deploy the HRV Brain API v3.3.4 with Supabase PostgreSQL backend. This guide covers deployment to platforms like Render, Railway, or Heroku while maintaining connection to your Supabase database.
+Deploy the HRV Brain API v3.3.4 to **Render** with Supabase PostgreSQL backend. This setup provides the perfect combination of Python/NumPy support for HRV calculations with Supabase's robust database infrastructure.
 
 ## 📋 Prerequisites
 
 - ✅ Supabase project created (`atriom_hrv_db`)
 - ✅ Database schema deployed (via `setup_database_supabase.py`)
-- ✅ GitHub repository with API code
-- ✅ Deployment platform account (Render/Railway/Heroku)
+- ✅ GitHub repository with your API code
+- ✅ Render account (free tier available)
+
+## 🚀 RENDER DEPLOYMENT STEPS
+
+### Step 1: Prepare Your Repository
+
+Ensure your GitHub repository has all the required files:
+
+```bash
+# Verify files are present
+ls -la /Users/ashkanbeheshti/Desktop/hrv-ios-api/api_hrv/
+
+# Should include:
+# ✅ app.py (22KB - Main Flask API)
+# ✅ hrv_metrics.py (11KB - NumPy HRV calculations)
+# ✅ requirements.txt (Python dependencies)
+# ✅ render.yaml (Deployment configuration)
+# ✅ database_config.py (Supabase connection)
+```
+
+### Step 2: Create Render Account & Connect GitHub
+
+1. **Sign up at [render.com](https://render.com)** (free tier available)
+2. **Connect GitHub account** in Render dashboard
+3. **Select your repository**: `hrv-ios-api`
+
+### Step 3: Create Web Service
+
+1. **Click "New +"** → **"Web Service"**
+2. **Connect Repository**: Select `hrv-ios-api`
+3. **Configure Service**:
+   - **Name**: `hrv-brain-api`
+   - **Root Directory**: `/api_hrv`
+   - **Runtime**: `Python 3.11`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`
+
+### Step 4: Set Environment Variables
+
+**CRITICAL**: Add these environment variables in Render dashboard:
+
+```bash
+# Supabase Database Connection (REQUIRED)
+SUPABASE_DB_HOST=db.zluwfmovtmlijawhelzi.supabase.co
+SUPABASE_DB_NAME=postgres
+SUPABASE_DB_USER=postgres
+SUPABASE_DB_PASSWORD=Slavoj@!64Su
+SUPABASE_DB_PORT=5432
+
+# Application Settings (REQUIRED)
+FLASK_ENV=production
+PYTHON_VERSION=3.11.0
+
+# Optional: Supabase API (for future features)
+SUPABASE_URL=https://zluwfmovtmlijawhelzi.supabase.co
+SUPABASE_ANON_KEY=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+```
+
+### Step 5: Deploy
+
+1. **Click "Create Web Service"**
+2. **Render will automatically**:
+   - Clone your repository
+   - Install Python dependencies
+   - Start your Flask application
+   - Provide a public URL
+
+3. **Your API will be available at**:
+   ```
+   https://hrv-brain-api.onrender.com
+   ```
+
+### Step 6: Enable Auto-Deploy
+
+**Render automatically deploys when you push to GitHub:**
+- ✅ Push code → Automatic deployment
+- ✅ Health checks ensure successful deployment
+- ✅ Rollback on deployment failures
 
 ## 🏗️ Architecture
 
 ```
-iOS App → API (Render/Railway) → Supabase PostgreSQL
-                ↓
-        Edge Functions (Optional)
+iOS App → Render (Python/Flask/NumPy) → Supabase PostgreSQL
+          (Auto-scaling, CI/CD)     (Database, Auth, Storage)
 ```
+
+**Why This Architecture:**
+- ✅ **Python/NumPy Support**: Full HRV calculations with scientific libraries
+- ✅ **Supabase Database**: Robust PostgreSQL with Row Level Security
+- ✅ **Auto-scaling**: Render handles traffic spikes automatically
+- ✅ **CI/CD**: Automatic deployments from GitHub
+- ✅ **Cost-effective**: Free tier for development, affordable scaling
 
 ## 📁 Project Structure
 
@@ -28,6 +111,7 @@ iOS App → API (Render/Railway) → Supabase PostgreSQL
 ├── database_config.py         # Supabase connection management
 ├── database_schema.sql        # Complete database schema
 ├── requirements.txt           # Python dependencies
+├── render.yaml                # Render deployment configuration
 ├── .env.supabase             # Environment variables (local)
 ├── .gitignore                # Git ignore rules
 └── DEPLOYMENT_GUIDE.md       # This file
@@ -54,11 +138,6 @@ SUPABASE_URL=https://zluwfmovtmlijawhelzi.supabase.co
 SUPABASE_ANON_KEY=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 ```
 
-## 🚀 Deployment Options
-
-### Option 1: Render (Recommended)
-
-#### Step 1: Connect GitHub Repository
 1. Go to [render.com](https://render.com)
 2. Click "New +" → "Web Service"
 3. Connect your GitHub repository: `hrv-ios-api`
