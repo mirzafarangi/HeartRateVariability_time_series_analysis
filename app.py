@@ -22,6 +22,8 @@ from psycopg2.pool import ThreadedConnectionPool
 
 from database_config import DatabaseConfig
 from hrv_metrics import calculate_hrv_metrics
+import jwt
+from supabase import create_client, Client
 
 # Configure logging
 logging.basicConfig(

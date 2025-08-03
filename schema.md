@@ -45,13 +45,29 @@ The unified schema implements a clean, extensible architecture with:
     "session_id": "uuid",
     "user_id": "string", 
     "tag": "base_tag",           // Always base tag: "rest", "sleep", "experiment_paired_pre", etc.
-    "subtag": "specific_tag",    // Semantic subtag for all sessions
-    "event_id": "number",        // Event grouping ID for all sessions
+    "subtag": "specific_tag",    // ALWAYS NON-OPTIONAL: Auto-assigned semantic subtag
+    "event_id": "number",        // ALWAYS NON-OPTIONAL: Auto-assigned event grouping ID
     "duration_minutes": "number",
     "recorded_at": "ISO8601",
     "rr_intervals": "[numbers]"
 }
 ```
+
+### ⚠️ CRITICAL: SUBTAG AND EVENT_ID ARE ALWAYS NON-OPTIONAL
+
+#### SUBTAG Rules:
+- **`subtag` is NEVER null/optional** - it's always a non-empty String
+- **`subtag` is auto-assigned** by iOS based on selected tag
+- **User never manually enters subtag** - it's computed automatically
+- **iOS models must use `String` (not `String?`)** for subtag field
+
+#### EVENT_ID Rules:
+- **`event_id` is NEVER null/optional** - it's always a valid Integer
+- **`event_id` is auto-assigned** by iOS when starting session recording
+- **User never manually enters event_id** - it's computed automatically
+- **iOS models must use `Int` (not `Int?`)** for eventId field
+- **Non-sleep sessions**: Always `eventId = 0` (no grouping)
+- **Sleep/grouped sessions**: Always `eventId > 0` (shared across related sessions)
 
 ### 1. NON-SLEEP SESSIONS (Rest, Experiment, etc.)
 
@@ -94,6 +110,21 @@ The unified schema implements a clean, extensible architecture with:
     "event_id": 2001,            // Groups all phases in same workout
     "duration_minutes": 5,
     "recorded_at": "2025-08-03T05:08:01Z",
+    "rr_intervals": [823.45, 867.89, 901.23, 845.67, 892.34, 876.12]
+}
+```
+
+### 3. FUTURE EXTENSIBILITY (e.g., Breath Workout with phases)
+
+```json
+{
+    "session_id": "C8D3F902-G567-5E90-B234-9CEF40HI4FDA",
+    "user_id": "oMeXbIPwTXUU1WRkrLU0mtQOU9r1",
+    "tag": "breath_workout",
+    "subtag": "breath_phase_2",  // Semantic: indicates workout phase
+    "event_id": 2001,            // Groups all phases in same workout
+    "duration_minutes": 5,
+    "recorded_at": "2025-08-03T05:08:01Z",
     "rr_intervals": [823.45, 867.89, 901.23, 845.67, 889.12, 834.56]
 }
 ```
@@ -104,7 +135,7 @@ The unified schema implements a clean, extensible architecture with:
 
 ### Users Table (Authentication & Profile)
 ```sql
-CREATE TABLE users (
+CREATE TABLE profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
@@ -121,7 +152,7 @@ CREATE TABLE users (
 CREATE TABLE sessions (
     -- Core identifiers
     session_id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     
     -- Session metadata (UNIFIED SCHEMA)
     tag VARCHAR(50) NOT NULL,           -- rest, sleep, experiment_paired_pre, etc.
