@@ -16,7 +16,7 @@ class DatabaseConfig:
     """Database configuration and connection management"""
     
     def __init__(self):
-        # Supabase connection details (from .env.supabase)
+        # Supabase connection details (from .env.railway)
         self.host = os.environ.get('SUPABASE_DB_HOST', 'db.zluwfmovtmlijawhelzi.supabase.co')
         self.database = os.environ.get('SUPABASE_DB_NAME', 'postgres')
         self.user = os.environ.get('SUPABASE_DB_USER', 'postgres')

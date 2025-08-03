@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-HRV App Unified Supabase Database Setup Script
-Version: 4.0.0 FINAL CLEAN EDITION
+HRV App Database Manager - FINAL CLEAN VERSION
+Version: 4.0.0 FINAL
 Source: schema.md (Golden Reference) + Supabase Auth Integration
 
-CRITICAL FIXES:
-- Uses 'profiles' table (NOT 'users' - conflicts with auth.users)
-- Proper foreign key references to auth.users(id)
-- Unified authentication with service role key
-- Clean environment variable handling
+Single script for all database operations:
+- Setup unified schema
+- Validate connection
+- Clean/reset database
 """
 
 import os
 import sys
+import argparse
 from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -26,10 +26,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def load_environment():
-    """Load environment variables from .env.supabase"""
-    env_file = Path('.env.supabase')
+    """Load environment variables from .env.railway"""
+    env_file = Path('.env.railway')
     if not env_file.exists():
-        logger.error("❌ .env.supabase file not found!")
+        logger.error("❌ .env.railway file not found!")
         return False
     
     with open(env_file, 'r') as f:
@@ -41,7 +41,7 @@ def load_environment():
                 except ValueError:
                     continue
     
-    logger.info("✅ Environment variables loaded from .env.supabase")
+    logger.info("✅ Environment variables loaded from .env.railway")
     return True
 
 def get_database_connection():
@@ -62,8 +62,57 @@ def get_database_connection():
         logger.error(f"Database connection failed: {e}")
         raise
 
-def execute_unified_schema():
-    """Execute the unified database schema with proper Supabase integration"""
+def validate_connection():
+    """Validate database connection and schema"""
+    logger.info("🔍 Validating database connection...")
+    
+    try:
+        conn = get_database_connection()
+        cursor = conn.cursor()
+        
+        # Test basic query
+        cursor.execute('SELECT version();')
+        version = cursor.fetchone()
+        logger.info(f"✅ Connection successful!")
+        logger.info(f"PostgreSQL version: {version['version'][:80]}...")
+        
+        # Test schema existence
+        cursor.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name IN ('profiles', 'sessions')
+            ORDER BY table_name;
+        """)
+        tables = cursor.fetchall()
+        
+        logger.info(f"\nSchema validation:")
+        expected_tables = ['profiles', 'sessions']
+        found_tables = [row['table_name'] for row in tables]
+        
+        for table in expected_tables:
+            if table in found_tables:
+                logger.info(f"✅ Table '{table}' exists")
+            else:
+                logger.info(f"❌ Table '{table}' missing")
+        
+        cursor.close()
+        conn.close()
+        
+        if len(found_tables) == len(expected_tables):
+            logger.info("\n✅ DATABASE VALIDATION: SUCCESSFUL")
+            return True
+        else:
+            logger.info("\n❌ DATABASE VALIDATION: FAILED")
+            return False
+            
+    except Exception as e:
+        logger.error(f"\n❌ Database validation failed: {e}")
+        return False
+
+def setup_schema():
+    """Execute the unified database schema"""
+    logger.info("📋 Setting up unified database schema...")
     
     # UNIFIED SCHEMA - FINAL CLEAN VERSION
     schema_sql = """
@@ -78,7 +127,6 @@ def execute_unified_schema():
     DROP TABLE IF EXISTS public.profiles CASCADE;
     
     -- PROFILES TABLE (extends Supabase auth.users)
-    -- Note: Supabase provides auth.users table automatically
     CREATE TABLE public.profiles (
         -- Primary key references Supabase auth.users
         id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -102,9 +150,9 @@ def execute_unified_schema():
         user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
         
         -- Session metadata (UNIFIED SCHEMA)
-        tag VARCHAR(50) NOT NULL,           -- rest, sleep, experiment_paired_pre, etc.
-        subtag VARCHAR(100) NOT NULL,       -- rest_single, sleep_interval_1, etc.
-        event_id INTEGER NOT NULL DEFAULT 0, -- 0 = standalone, >0 = grouped events
+        tag VARCHAR(50) NOT NULL,
+        subtag VARCHAR(100) NOT NULL,
+        event_id INTEGER NOT NULL DEFAULT 0,
         
         -- Timing
         duration_minutes INTEGER NOT NULL,
@@ -211,15 +259,48 @@ def execute_unified_schema():
         return True
         
     except Exception as e:
-        logger.error(f"Schema execution failed: {e}")
+        logger.error(f"Schema setup failed: {e}")
+        conn.rollback()
+        conn.close()
+        return False
+
+def cleanup_database():
+    """Clean/reset database to fresh state"""
+    logger.info("🧹 Cleaning database...")
+    
+    cleanup_sql = """
+    -- Clean slate: Drop all tables and recreate
+    DROP TABLE IF EXISTS public.sessions CASCADE;
+    DROP TABLE IF EXISTS public.profiles CASCADE;
+    DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
+    """
+    
+    conn = get_database_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(cleanup_sql)
+        conn.commit()
+        logger.info("✅ Database cleaned successfully!")
+        
+        cursor.close()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        logger.error(f"Database cleanup failed: {e}")
         conn.rollback()
         conn.close()
         return False
 
 def main():
-    """Main setup function"""
-    logger.info("🚀 Starting HRV App Unified Database Setup v4.0.0")
-    logger.info("📋 Following schema.md with CLEAN Supabase integration")
+    """Main function with command line arguments"""
+    parser = argparse.ArgumentParser(description='HRV App Database Manager')
+    parser.add_argument('action', choices=['setup', 'validate', 'cleanup', 'reset'],
+                       help='Action to perform')
+    
+    args = parser.parse_args()
+    
+    logger.info(f"🚀 HRV App Database Manager v4.0.0 - Action: {args.action}")
     
     # Load environment
     if not load_environment():
@@ -236,36 +317,21 @@ def main():
         logger.error(f"❌ Missing environment variables: {missing_vars}")
         sys.exit(1)
     
-    logger.info("✅ Configuration validation passed")
+    # Execute action
+    if args.action == 'validate':
+        success = validate_connection()
+    elif args.action == 'setup':
+        success = setup_schema()
+    elif args.action == 'cleanup':
+        success = cleanup_database()
+    elif args.action == 'reset':
+        logger.info("🔄 Resetting database (cleanup + setup)...")
+        success = cleanup_database() and setup_schema()
     
-    # Test database connection
-    logger.info("🔍 Testing database connection...")
-    try:
-        conn = get_database_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT version();')
-        version = cursor.fetchone()
-        logger.info(f"Database connection test successful: {version}")
-        cursor.close()
-        conn.close()
-        logger.info("✅ Database connection successful!")
-    except Exception as e:
-        logger.error(f"❌ Database connection failed: {e}")
-        sys.exit(1)
-    
-    # Execute schema
-    logger.info("📋 Executing unified database schema...")
-    if execute_unified_schema():
-        logger.info("\n" + "="*60)
-        logger.info("✅ HRV APP DATABASE SETUP COMPLETE!")
-        logger.info("="*60)
-        logger.info("🎯 Schema: UNIFIED & CONSISTENT")
-        logger.info("🔐 Auth: Supabase RLS enabled")
-        logger.info("📊 Tables: profiles, sessions")
-        logger.info("🚀 Ready for API integration!")
-        logger.info("="*60)
+    if success:
+        logger.info(f"\n✅ {args.action.upper()} COMPLETED SUCCESSFULLY!")
     else:
-        logger.error("❌ Database setup failed!")
+        logger.error(f"\n❌ {args.action.upper()} FAILED!")
         sys.exit(1)
 
 if __name__ == "__main__":

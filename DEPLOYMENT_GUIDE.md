@@ -1,82 +1,107 @@
-# HRV Brain API - Render Deployment Guide
+# HRV Brain API - Unified Deployment Guide
 
 ## 🚀 Overview
 
-Deploy the HRV Brain API v3.3.4 to **Render** with Supabase PostgreSQL backend. This setup provides the perfect combination of Python/NumPy support for HRV calculations with Supabase's robust database infrastructure.
+Deploy the HRV Brain API v4.0.0 to **Railway** with Supabase PostgreSQL backend. This unified setup provides clean, production-ready deployment with proper schema consistency and authentication.
 
 ## 📋 Prerequisites
 
 - ✅ Supabase project created (`atriom_hrv_db`)
-- ✅ Database schema deployed (via `setup_database_supabase.py`)
-- ✅ GitHub repository with your API code
-- ✅ Render account (free tier available)
+- ✅ Database schema deployed (via `database_manager.py reset`)
+- ✅ GitHub repository with clean API code
+- ✅ Railway account (free tier available)
 
-## 🚀 RENDER DEPLOYMENT STEPS
+## 🚀 RAILWAY DEPLOYMENT STEPS
 
-### Step 1: Prepare Your Repository
+### Step 1: Verify Clean File Structure
 
-Ensure your GitHub repository has all the required files:
+Ensure your repository has the unified, clean file structure:
 
 ```bash
-# Verify files are present
+# Verify clean API folder structure
 ls -la /Users/ashkanbeheshti/Desktop/hrv-ios-api/api_hrv/
 
-# Should include:
-# ✅ app.py (22KB - Main Flask API)
-# ✅ hrv_metrics.py (11KB - NumPy HRV calculations)
-# ✅ requirements.txt (Python dependencies)
-# ✅ render.yaml (Deployment configuration)
-# ✅ database_config.py (Supabase connection)
+# Should include ONLY:
+# ✅ app.py (Main Flask API)
+# ✅ database_config.py (DB connection)
+# ✅ database_manager.py (DB setup/validation)
+# ✅ hrv_metrics.py (HRV calculations)
+# ✅ schema.md (Golden reference)
+# ✅ requirements.txt (Dependencies)
+# ✅ .env.railway (Environment template)
+# ✅ README.md & DEPLOYMENT_GUIDE.md (Documentation)
+# ✅ Railway deployment files (nixpacks.toml, railway.json, runtime.txt)
 ```
 
-### Step 2: Create Render Account & Connect GitHub
+### Step 2: Setup Database Schema
 
-1. **Sign up at [render.com](https://render.com)** (free tier available)
-2. **Connect GitHub account** in Render dashboard
-3. **Select your repository**: `hrv-ios-api`
+Before deployment, ensure your Supabase database has the unified schema:
 
-### Step 3: Create Web Service
+```bash
+# Navigate to API folder
+cd /Users/ashkanbeheshti/Desktop/hrv-ios-api/api_hrv
 
-1. **Click "New +"** → **"Web Service"**
-2. **Connect Repository**: Select `hrv-ios-api`
-3. **Configure Service**:
-   - **Name**: `hrv-brain-api`
+# Reset database with clean, unified schema
+python3 database_manager.py reset
+
+# Verify schema is correct
+python3 database_manager.py validate
+```
+
+### Step 3: Create Railway Account & Deploy
+
+1. **Sign up at [railway.app](https://railway.app)** (free tier available)
+2. **Click "New Project"** → **"Deploy from GitHub repo"**
+3. **Connect Repository**: Select `hrv-ios-api`
+4. **Configure Service**:
    - **Root Directory**: `/api_hrv`
-   - **Runtime**: `Python 3.11`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`
+   - **Runtime**: Automatically detected (Python 3.11)
+   - **Build**: Automatically uses `requirements.txt`
+   - **Start**: Automatically uses `gunicorn`
 
 ### Step 4: Set Environment Variables
 
-**CRITICAL**: Add these environment variables in Render dashboard:
+**CRITICAL**: Copy ALL variables from `.env.railway` to Railway dashboard:
 
 ```bash
-# Supabase Database Connection (REQUIRED)
+# === SUPABASE DATABASE CONNECTION ===
 SUPABASE_DB_HOST=db.zluwfmovtmlijawhelzi.supabase.co
 SUPABASE_DB_NAME=postgres
 SUPABASE_DB_USER=postgres
 SUPABASE_DB_PASSWORD=Slavoj@!64Su
 SUPABASE_DB_PORT=5432
 
-# Application Settings (REQUIRED)
-FLASK_ENV=production
-PYTHON_VERSION=3.11.0
-
-# Optional: Supabase API (for future features)
+# === SUPABASE AUTHENTICATION ===
 SUPABASE_URL=https://zluwfmovtmlijawhelzi.supabase.co
-SUPABASE_ANON_KEY=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpsdXdmbW92dG1saWphd2hlbHppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyMjE4OTIsImV4cCI6MjA2OTc5Nzg5Mn0.fZDlNtT5rhbaxQ3iQRlkmgE6gP3Wav7EFD_Dp4dHC2o
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpsdXdmbW92dG1saWphd2hlbHppIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDIyMTg5MiwiZXhwIjoyMDY5Nzk3ODkyfQ.lf_Ls_7MVykV_P-4gitP1QLo9PJxSrDRX1VMty_rnuA
+
+# === FLASK CONFIGURATION ===
+FLASK_ENV=production
+PORT=5000
+PYTHON_VERSION=3.11.0
 ```
 
-### Step 5: Deploy
+### Step 5: Deploy & Verify
 
-1. **Click "Create Web Service"**
-2. **Render will automatically**:
-   - Clone your repository
-   - Install Python dependencies
-   - Start your Flask application
+1. **Railway will automatically**:
+   - Clone your repository from GitHub
+   - Install Python dependencies from `requirements.txt`
+   - Start your Flask application with `gunicorn`
    - Provide a public URL
 
-3. **Your API will be available at**:
+2. **Your API will be available at**:
+   ```
+   https://your-project-name.up.railway.app
+   ```
+
+3. **Verify deployment**:
+   ```bash
+   # Test health endpoint
+   curl https://your-project-name.up.railway.app/health
+   
+   # Should return:
+   # {"status": "healthy", "timestamp": "...", "database": "connected"}
    ```
    https://hrv-brain-api.onrender.com
    ```
