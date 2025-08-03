@@ -448,6 +448,7 @@ def get_processed_sessions(user_id: str):
                     'duration_minutes': session['duration_minutes'],
                     'recorded_at': session['recorded_at'].isoformat(),
                     'processed_at': session['processed_at'].isoformat() if session['processed_at'] else None,
+                    'status': 'completed',  # Add missing status field for iOS compatibility
                     'hrv_metrics': {
                         'mean_hr': float(session['mean_hr']) if session['mean_hr'] else None,
                         'mean_rr': float(session['mean_rr']) if session['mean_rr'] else None,
