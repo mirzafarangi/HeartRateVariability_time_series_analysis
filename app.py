@@ -613,12 +613,14 @@ if __name__ == '__main__':
     # Load environment variables
     load_environment()
     
-    # Initialize connection pool
+    # Try to initialize connection pool, but don't crash if it fails
     try:
         initialize_connection_pool()
+        logger.info(f"🔗 Connected to Supabase PostgreSQL")
     except Exception as e:
-        logger.error(f"Failed to initialize: {e}")
-        exit(1)
+        logger.warning(f"⚠️ Database connection failed during startup: {e}")
+        logger.info(f"🔄 Will retry database connection on first API call")
+        # Don't exit - let the app start anyway for health checks
     
     # Run the application
     port = int(os.environ.get('PORT', 5000))
@@ -626,6 +628,5 @@ if __name__ == '__main__':
     
     logger.info(f"🚀 Starting HRV Brain API v3.3.4 on port {port}")
     logger.info(f"📋 Following schema.md unified data model")
-    logger.info(f"🔗 Connected to Supabase PostgreSQL")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
