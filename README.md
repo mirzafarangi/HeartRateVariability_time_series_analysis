@@ -1,9 +1,11 @@
 # HRV Brain API - Scientific Computing Platform
 
-**Version:** 3.3.4 Final  
+**Version:** 4.0.0 Final  
 **Architecture:** Railway + Supabase PostgreSQL  
 **Language:** Python 3.11 + NumPy  
-**Status:** Production Ready  
+**Status:** Production Deployed  
+**API URL:** https://hrv-brain-api-production.up.railway.app  
+**Database:** Supabase PostgreSQL (Transaction Pooler, IPv4-compatible)  
 
 ## Overview
 
@@ -183,6 +185,36 @@ FLASK_ENV=production
 - **Log Analysis**: Structured logging for debugging
 - **Performance Metrics**: Response time and error rate monitoring
 - **Security Updates**: Regular dependency updates
+
+## Deployment Configuration
+
+### Production Environment
+The system is deployed on Railway with Supabase PostgreSQL backend using the following configuration:
+
+**Database Connection**: Supabase Transaction Pooler (IPv4-compatible)
+- Host: aws-0-eu-central-1.pooler.supabase.com
+- Port: 6543 (Transaction Pooler)
+- Connection pooling: 15 connections per user+database combination
+
+**Application Server**: Gunicorn WSGI with optimized configuration
+- Workers: 2 (Railway Nano compute)
+- Timeout: 120 seconds
+- Worker class: sync
+- Max requests: 1000 per worker
+
+**Critical Dependencies**:
+- PyJWT==2.8.0 (JWT token handling)
+- supabase==2.3.4 (Database client)
+- psycopg2-binary==2.9.9 (PostgreSQL adapter)
+- numpy==1.26.4 (HRV calculations)
+
+### Deployment Lessons
+Key issues resolved during production deployment:
+
+1. **IPv4 Compatibility**: Railway requires Supabase Transaction Pooler instead of Direct Connection
+2. **Gunicorn Arguments**: Invalid `--keepalive` argument removed from railway.json configuration
+3. **Import Dependencies**: Missing PyJWT and supabase packages added to requirements.txt
+4. **Security Management**: API keys rotated and environment variables properly configured
 
 ## References
 

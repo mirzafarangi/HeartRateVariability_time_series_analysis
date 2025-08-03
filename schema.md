@@ -1,8 +1,9 @@
 # HRV App Unified Data Schema Architecture
 
-**Version:** 3.3.4 Final  
-**Date:** 2025-08-03  
-**Status:** Production Ready  
+**Version:** 4.0.0 Final  
+**Date:** 2025-08-04  
+**Status:** ✅ Production Deployed (Railway + Supabase)  
+**API URL:** https://hrv-brain-api-production.up.railway.app  
 
 This document defines the complete, unified data schema for the HRV iOS App → API → Database pipeline. All components must strictly adhere to this schema for consistency and maintainability.
 
@@ -543,4 +544,66 @@ failed      → Processing error occurred
 
 **End of Schema Documentation**
 
-*This document serves as the single source of truth for the HRV App unified data schema. All development must adhere to these specifications for consistency and maintainability.*
+*This unified schema ensures consistency across all components and serves as the single source of truth for the entire HRV application ecosystem.*
+
+---
+
+## 🚀 DEPLOYMENT LESSONS LEARNED
+
+### ✅ Successful Railway + Supabase Deployment
+
+**Final Working Configuration:**
+- **API URL**: https://hrv-brain-api-production.up.railway.app
+- **Database**: Supabase PostgreSQL (Transaction Pooler, IPv4-compatible)
+- **Environment**: Railway with Nixpacks + Python 3.11
+
+### 🔧 Critical Issues Resolved
+
+#### 1. **Security Issue**: Exposed Secrets
+- **Problem**: Supabase credentials exposed in GitHub
+- **Solution**: Rotated all API keys, removed .env files from git, added .env* to .gitignore
+
+#### 2. **Dependency Issue**: Missing Python Packages
+- **Problem**: Flask app crashed on startup due to missing `PyJWT` and `supabase` imports
+- **Solution**: Added to requirements.txt:
+  ```
+  PyJWT==2.8.0
+  supabase==2.3.4
+  ```
+
+#### 3. **Gunicorn Issue**: Invalid Arguments
+- **Problem**: `railway.json` used invalid `--keepalive 2` argument
+- **Solution**: Removed invalid argument from startCommand:
+  ```json
+  "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
+  ```
+
+#### 4. **Database Connection**: IPv4 Compatibility
+- **Problem**: Railway IPv4-only networking couldn't connect to Supabase Direct Connection
+- **Solution**: Used Supabase Transaction Pooler (port 6543, IPv4-compatible):
+  ```
+  SUPABASE_DB_HOST=aws-0-eu-central-1.pooler.supabase.com
+  SUPABASE_DB_PORT=6543
+  ```
+
+### 📋 Final Environment Variables
+```bash
+SUPABASE_DB_HOST=aws-0-eu-central-1.pooler.supabase.com
+SUPABASE_DB_PORT=6543
+SUPABASE_DB_NAME=postgres
+SUPABASE_DB_USER=postgres.hmckwsyksbckxfxuzxca
+SUPABASE_DB_PASSWORD=[ROTATED-PASSWORD]
+SUPABASE_URL=https://hmckwsyksbckxfxuzxca.supabase.co
+SUPABASE_ANON_KEY=[ROTATED-ANON-KEY]
+SUPABASE_SERVICE_ROLE_KEY=[ROTATED-SERVICE-KEY]
+FLASK_ENV=production
+PORT=5000
+PYTHON_VERSION=3.11.0
+```
+
+### 🎯 Key Takeaways for Future Deployments
+1. **Always use Supabase Transaction Pooler** for Railway/Heroku deployments
+2. **Check railway.json for invalid Gunicorn arguments** before deployment
+3. **Verify all Python imports have corresponding requirements.txt entries**
+4. **Rotate secrets immediately** if exposed in version control
+5. **Test health endpoint locally** before deploying to production
