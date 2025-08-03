@@ -507,12 +507,16 @@ def get_session_statistics(user_id: str):
                     'sleep_events': 0
                 })
             
+            # Map PostgreSQL function results to expected iOS format
+            total_sessions = stats['total_sessions'] or 0
+            tags_summary = stats['tags_summary'] or {}
+            
             return jsonify({
-                'raw_total': stats['raw_total'],
-                'processed_total': stats['processed_total'],
-                'raw_by_tag': stats['raw_by_tag'] or {},
-                'processed_by_tag': stats['processed_by_tag'] or {},
-                'sleep_events': stats['sleep_events']
+                'raw_total': total_sessions,
+                'processed_total': total_sessions,  # All sessions are processed
+                'raw_by_tag': tags_summary,
+                'processed_by_tag': tags_summary,
+                'sleep_events': tags_summary.get('sleep', 0)  # Count of sleep sessions
             })
             
         finally:
