@@ -9,6 +9,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 import logging
+import socket
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -23,30 +25,51 @@ class DatabaseConfig:
         self.password = os.environ.get('SUPABASE_DB_PASSWORD', 'Slavoj@!64Su')
         self.port = int(os.environ.get('SUPABASE_DB_PORT', '5432'))
         
+        # Resolve to IPv4 address for Railway compatibility
+        self.ipv4_host = self._resolve_to_ipv4(self.host)
+        
         # Connection pool settings
         self.min_connections = 1
         self.max_connections = 10
         
+    def _resolve_to_ipv4(self, hostname: str) -> str:
+        """Resolve hostname to IPv4 address for Railway compatibility"""
+        try:
+            # Get all addresses and filter for IPv4
+            addresses = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            if addresses:
+                ipv4_addr = addresses[0][4][0]
+                logger.info(f"Resolved {hostname} to IPv4: {ipv4_addr}")
+                return ipv4_addr
+            else:
+                logger.warning(f"No IPv4 address found for {hostname}, using hostname")
+                return hostname
+        except Exception as e:
+            logger.warning(f"Failed to resolve {hostname} to IPv4: {e}, using hostname")
+            return hostname
+    
     def get_connection_string(self) -> str:
         """Get PostgreSQL connection string"""
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+        return f"postgresql://{self.user}:{self.password}@{self.ipv4_host}:{self.port}/{self.database}"
     
     def get_connection(self) -> psycopg2.extensions.connection:
-        """Get database connection with proper error handling and IPv4 forcing"""
+        """Get database connection with Railway-optimized settings"""
         try:
-            # Force IPv4 connection to avoid Railway IPv6 issues
+            # Railway-optimized connection parameters to fix IPv6 issues
             conn = psycopg2.connect(
-                host=self.host,
+                host=self.ipv4_host,  # Use resolved IPv4 address
                 database=self.database,
                 user=self.user,
                 password=self.password,
                 port=self.port,
                 cursor_factory=RealDictCursor,
-                connect_timeout=30,
-                keepalives_idle=600,
-                keepalives_interval=30,
+                connect_timeout=10,  # Shorter timeout for Railway
+                keepalives_idle=300,  # Reduced for Railway
+                keepalives_interval=10,  # More frequent for Railway
                 keepalives_count=3,
-                sslmode='require'
+                sslmode='require',
+                # Force IPv4 to avoid Railway IPv6 connectivity issues
+                options='-c default_transaction_isolation=read_committed'
             )
             logger.info("Database connection established successfully")
             return conn
