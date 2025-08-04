@@ -1,9 +1,31 @@
-# HRV Brain API - Scientific Computing Platform
+# HRV Brain API & Database - Production System v5.0.0
+**Complete Backend Implementation for HRV Analysis Platform**
 
-**Version:** 4.1.0 Final  
-**Architecture:** Railway + Supabase PostgreSQL  
-**Language:** Python 3.11 + NumPy  
-**Status:** Production Deployed + iOS Fixes  
+> **🎯 BLUEPRINT STATUS**: This README serves as the canonical deployment guide for the entire backend system. Follow these instructions for guaranteed successful deployment.
+
+**Version:** 5.0.0 FINAL  
+**Architecture:** Railway + Supabase PostgreSQL + iOS Swift SDK  
+**Language:** Python 3.11 + NumPy + Flask  
+**Status:** ✅ Production Ready + iOS Integrated  
+**API URL:** https://hrv-brain-api-production.up.railway.app  
+**Database:** Supabase PostgreSQL with Transaction Pooler  
+
+## 🏗️ **SYSTEM ARCHITECTURE**
+
+### **Core Components**
+- **Flask API**: RESTful endpoints for session management and HRV processing
+- **PostgreSQL Database**: Supabase-hosted with Row Level Security
+- **HRV Engine**: NumPy-based calculations for 9 physiological metrics
+- **Authentication**: Supabase Auth integration
+- **Deployment**: Railway with auto-scaling and CI/CD
+
+### **Key Features**
+- **9 HRV Metrics**: RMSSD, SDNN, pNN50, CV_RR, DFA α1, SD2/SD1, Mean HR/RR, Count RR
+- **Real-time Processing**: Async session processing with status tracking
+- **User Isolation**: Multi-tenant architecture with secure data separation
+- **iOS Integration**: Direct PostgREST client support for mobile apps
+- **Production Ready**: Health monitoring, error handling, logging
+- **Scalable**: Auto-scaling deployment with database connection pooling
 **API URL:** https://hrv-brain-api-production.up.railway.app  
 **Database:** Supabase PostgreSQL (Transaction Pooler, IPv4-compatible)  
 
