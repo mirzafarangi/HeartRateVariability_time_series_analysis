@@ -55,21 +55,26 @@ The iOS app implements two distinct recording modes based on the selected tag:
 
 **1. Single Recording Mode (Non-Sleep Tags)**
 - **Triggers**: `rest`, `experiment_paired_pre`, `experiment_paired_post`, `experiment_duration`, `breath_workout`
-- **Behavior**: User manually starts and stops one session
+- **Behavior**: Timer-based recording for selected duration X minutes
+  - **Auto-Stop**: Session automatically ends when timer countdown reaches zero
+  - **Manual Stop**: User can stop early, but only complete recorded data is processed
 - **UI**: "Start Recording" button
 - **Session Creation**: 
   - `eventId = 0` (no grouping)
   - `subtag = "{tag}_single"` (e.g., "rest_single")
-  - User controls start/stop timing
+  - Duration determined by user selection (1-60 minutes)
 
 **2. Auto-Recording Mode (Sleep Tag)**
 - **Triggers**: `sleep` tag selection
-- **Behavior**: Continuous interval recording until user stops
-- **UI**: "Start Auto-Recording Sleep Event" button
+- **Behavior**: Continuous automatic interval recording
+  - **Auto-Progression**: Each interval records for selected duration X minutes, then automatically starts next interval
+  - **Sequence**: `sleep_interval_1` → `sleep_interval_2` → `sleep_interval_3` → ... (continuous)
+  - **Manual Stop**: User can stop entire sleep event at any time, processing all completed intervals
+- **UI**: "Start Auto-Recording Sleep Event" button → "Stop Auto-Recording" button
 - **Session Creation**:
   - `eventId > 0` (grouped sessions, starts from 1001)
   - `subtag = "sleep_interval_N"` (e.g., "sleep_interval_1", "sleep_interval_2")
-  - Automatic interval progression
+  - Each interval has same duration as configured
 
 #### **Recording Configuration Flow**
 ```swift
@@ -97,16 +102,18 @@ func updateRecordingConfiguration(tag: SessionTag, duration: Int) {
 ```swift
 // User presses "Start Recording" in RecordingCard
 func startSingleRecording(tag: SessionTag, duration: Int) {
-    let session = Session(
-        userId: currentUserId,
-        tag: tag.rawValue,           // "rest"
-        subtag: "\(tag.rawValue)_single", // "rest_single" (auto-assigned)
-        eventId: 0,                  // No grouping
-        duration: duration,          // User-selected duration (1-60 min)
-        rrIntervals: []              // Populated during recording
+    recordingManager.startRecording(
+        tag: tag,                    // .rest, .experiment_paired_pre, etc.
+        duration: TimeInterval(duration * 60), // Convert minutes to seconds
+        heartRatePublisher: bleManager.heartRatePublisher,
+        subtag: nil,                 // Auto-assigned as "{tag}_single"
+        sleepEventId: nil            // No grouping for single sessions
     )
     
-    recordingManager.startRecording(session)
+    // RecordingManager automatically:
+    // 1. Creates timer for specified duration
+    // 2. Auto-stops when timer expires
+    // 3. Processes only complete recorded data if manually stopped early
 }
 ```
 
@@ -114,19 +121,44 @@ func startSingleRecording(tag: SessionTag, duration: Int) {
 ```swift
 // User presses "Start Auto-Recording Sleep Event" in RecordingCard
 func startSleepIntervalRecording(sleepEventId: Int, intervalDuration: Int, intervalNumber: Int) {
-    let session = Session(
-        userId: currentUserId,
-        tag: "sleep",                    // Always "sleep"
-        subtag: "sleep_interval_\(intervalNumber)", // "sleep_interval_1", "sleep_interval_2", etc.
-        eventId: sleepEventId,           // 1001, 1002, 1003... (groups all intervals)
-        duration: intervalDuration,     // User-selected interval duration
-        rrIntervals: []                 // Populated during recording
+    let subtag = "sleep_interval_\(intervalNumber)" // Auto-generated
+    
+    recordingManager.startRecording(
+        tag: .sleep,
+        duration: TimeInterval(intervalDuration * 60), // Convert minutes to seconds
+        heartRatePublisher: bleManager.heartRatePublisher,
+        subtag: subtag,              // "sleep_interval_1", "sleep_interval_2", etc.
+        sleepEventId: sleepEventId   // Groups all intervals (1001, 1002, etc.)
     )
-    
-    recordingManager.startRecording(session)
-    
-    // After completion, automatically start next interval
-    scheduleNextSleepInterval(sleepEventId, intervalNumber + 1)
+}
+
+// Auto-continuation logic in CoreEngine.onRecordingCompleted()
+func onRecordingCompleted() {
+    switch coreState.recordingMode {
+    case .single:
+        // Single recording completed - session processed and queued
+        break
+        
+    case .autoRecording(let sleepEventId, let intervalDuration, let currentInterval):
+        // Sleep interval completed - automatically start next interval
+        let nextInterval = currentInterval + 1
+        coreState.recordingMode = .autoRecording(
+            sleepEventId: sleepEventId, 
+            intervalDuration: intervalDuration, 
+            currentInterval: nextInterval
+        )
+        
+        // Auto-start next interval after 1 second delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if self.coreState.isInAutoRecordingMode {
+                self.startSleepIntervalRecording(
+                    sleepEventId: sleepEventId, 
+                    intervalDuration: intervalDuration, 
+                    intervalNumber: nextInterval
+                )
+            }
+        }
+    }
 }
 ```
 
@@ -141,6 +173,90 @@ struct SleepEvent {
     static func nextEventId(from history: [SleepEvent]) -> Int {
         let maxId = history.map { $0.id }.max() ?? 1000
         return maxId + 1
+    }
+}
+```
+
+#### **RecordingManager Timer Implementation**
+```swift
+class RecordingManager: ObservableObject {
+    @Published var isRecording: Bool = false
+    @Published var recordingProgress: Double = 0.0 // 0.0 to 1.0
+    @Published var remainingTime: Int = 0 // seconds remaining
+    @Published var elapsedTime: Int = 0 // seconds elapsed
+    
+    private var recordingTimer: Timer?
+    private var progressTimer: Timer?
+    
+    func startRecording(tag: SessionTag, duration: TimeInterval, heartRatePublisher: AnyPublisher<Int, Never>, subtag: String? = nil, sleepEventId: Int? = nil) {
+        // Create session with auto-assigned subtag and eventId
+        currentSession = Session(
+            userId: userId,
+            tag: tag.rawValue,
+            subtag: subtag ?? "\(tag.rawValue)_single", // Auto-assign if not provided
+            eventId: sleepEventId ?? 0, // 0 for single sessions, >0 for grouped
+            duration: Int(duration / 60), // Convert seconds to minutes
+            rrIntervals: []
+        )
+        
+        setupRecordingTimer(duration: Int(duration / 60))
+        startHeartRateCollection(heartRatePublisher)
+    }
+    
+    private func setupRecordingTimer(duration: Int) {
+        let totalSeconds = duration * 60
+        remainingTime = totalSeconds
+        elapsedTime = 0
+        recordingProgress = 0.0
+        
+        // Main timer - AUTO-STOPS recording when duration expires
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(totalSeconds), repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.stopRecording() // Automatic stop when timer expires
+            }
+        }
+        
+        // Progress timer - updates UI every second
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateProgress()
+            }
+        }
+    }
+    
+    func stopRecording() {
+        // Can be called by:
+        // 1. Timer expiration (automatic)
+        // 2. User manual stop (early termination)
+        // 3. Auto-recording stop (ends entire sleep event)
+        
+        recordingTimer?.invalidate()
+        progressTimer?.invalidate()
+        
+        // Process only the data that was actually recorded
+        if heartRateData.count >= 10 { // Minimum data threshold
+            let completedSession = Session(
+                id: currentSession?.id ?? UUID().uuidString,
+                userId: currentSession?.userId ?? "",
+                tag: currentSession?.tag ?? "",
+                subtag: currentSession?.subtag ?? "",
+                eventId: currentSession?.eventId ?? 0,
+                duration: currentSession?.duration ?? 0,
+                rrIntervals: heartRateData, // Only recorded data
+                recordedAt: recordingStartTime ?? Date()
+            )
+            
+            // Emit completion event
+            CoreEvents.shared.emit(.recordingCompleted(session: completedSession))
+            
+            // Queue for API processing
+            CoreEngine.shared.processCompletedSession(completedSession)
+        }
+        
+        // Reset state
+        isRecording = false
+        currentSession = nil
+        heartRateData = []
     }
 }
 ```
@@ -224,24 +340,11 @@ struct SleepEvent {
 }
 ```
 
-### 3. FUTURE EXTENSIBILITY (e.g., Breath Workout with phases)
 
-```json
-{
-    "session_id": "C8D3F902-G567-5E90-B234-9CEF40HI4FDA",
-    "user_id": "oMeXbIPwTXUU1WRkrLU0mtQOU9r1",
-    "tag": "breath_workout",
-    "subtag": "breath_phase_2",  // Semantic: indicates workout phase
-    "event_id": 2001,            // Groups all phases in same workout
-    "duration_minutes": 5,
-    "recorded_at": "2025-08-03T05:08:01Z",
-    "rr_intervals": [823.45, 867.89, 901.23, 845.67, 889.12, 834.56]
-}
-```
 
 ---
 
-## 🗄️ POSTGRESQL DATABASE SCHEMA
+## **POSTGRESQL DATABASE SCHEMA**
 
 ### Database Architecture
 **Version**: 4.2.0 ULTIMATE (Single Source of Truth)
@@ -566,7 +669,7 @@ def calculate_hrv_metrics(rr: List[float]) -> Dict[str, float]:
 
 ---
 
-## 🔌 API IMPLEMENTATION
+## **API IMPLEMENTATION**
 
 ### Clean API Structure
 ```python
@@ -786,7 +889,7 @@ hrv_metrics = calculate_hrv_metrics(data['rr_intervals'])
 
 ---
 
-## 📱 iOS IMPLEMENTATION
+## **iOS IMPLEMENTATION**
 
 ### Architecture Overview
 The iOS app implements a hybrid authentication and direct database access pattern:
@@ -794,6 +897,194 @@ The iOS app implements a hybrid authentication and direct database access patter
 **Authentication Layer**: HTTP-based Supabase authentication via SupabaseAuthService
 **Database Layer**: Direct PostgreSQL access via Supabase Swift SDK PostgREST client
 **UI Layer**: SwiftUI with clean separation between Record tab and Sessions tab functionality
+
+### **Complete User Workflow: From Signup to Session Processing**
+
+#### **1. User Authentication Flow**
+```swift
+// User signup/login via SupabaseAuthService (HTTP-based)
+class SupabaseAuthService: ObservableObject {
+    @Published var isAuthenticated = false
+    @Published var currentUser: SupabaseUser?
+    @Published var userId: String?
+    
+    func signUp(email: String, password: String) async throws {
+        // HTTP POST to Supabase Auth API
+        // Creates user in auth.users table
+        // Auto-creates profile in public.profiles table (via trigger)
+    }
+    
+    func signIn(email: String, password: String) async throws {
+        // HTTP POST to Supabase Auth API
+        // Returns JWT token for authenticated requests
+        // Sets userId for session creation
+    }
+}
+```
+
+#### **2. Record Tab Workflow**
+
+**Step 1: Sensor Connection (SensorCard)**
+```swift
+// User connects to Polar H10 sensor
+class BLEManager: ObservableObject {
+    @Published var connectionState: SensorConnectionState = .disconnected
+    @Published var heartRatePublisher: AnyPublisher<Int, Never>
+    
+    func connectToSensor() {
+        // Bluetooth connection to Polar H10
+        // Provides real-time heart rate data stream
+    }
+}
+```
+
+**Step 2: Recording Configuration (ConfigCard)**
+```swift
+// User selects tag and duration
+struct ConfigCard: View {
+    @EnvironmentObject var coreEngine: CoreEngine
+    
+    var body: some View {
+        // Tag Picker: rest, sleep, experiment_paired_pre, etc.
+        Picker("Session Type", selection: $coreEngine.coreState.selectedTag) {
+            ForEach(SessionTag.allCases) { tag in
+                Text(tag.displayName).tag(tag)
+            }
+        }
+        
+        // Duration Slider: 1-60 minutes
+        Slider(value: $coreEngine.coreState.selectedDuration, in: 1...60, step: 1)
+        
+        // Auto-recording mode indicator for sleep tag
+        if coreEngine.coreState.selectedTag.isAutoRecordingMode {
+            Text("Sleep mode records continuous intervals until you stop")
+        }
+    }
+}
+```
+
+**Step 3: Session Recording (RecordingCard)**
+```swift
+struct RecordingCard: View {
+    @EnvironmentObject var coreEngine: CoreEngine
+    
+    var body: some View {
+        // Recording button changes based on mode and state
+        Button(action: {
+            if coreEngine.coreState.isRecording {
+                if coreEngine.coreState.isInAutoRecordingMode {
+                    coreEngine.stopAutoRecording() // Stops entire sleep event, processes all completed intervals
+                } else {
+                    coreEngine.stopRecording() // Stops single session early, processes recorded data
+                }
+            } else {
+                coreEngine.startRecordingWithCurrentMode() // Starts timer-based recording
+            }
+        }) {
+            HStack {
+                Image(systemName: recordingButtonIcon)
+                Text(recordingButtonText) // "Start Recording" vs "Start Auto-Recording Sleep Event" vs "Stop Auto-Recording"
+            }
+        }
+        
+        // Live recording progress with timer countdown
+        if coreEngine.coreState.isRecording {
+            // Progress bar showing timer countdown
+            ProgressView(value: coreEngine.coreState.recordingProgress) {
+                Text("Recording Progress")
+            }
+            
+            // Real-time heart rate from Polar H10
+            Text("❤️ \(coreEngine.coreState.currentHeartRate) BPM")
+            
+            // Timer countdown (auto-stops when reaches 0:00)
+            Text("⏱️ \(formatTime(coreEngine.coreState.remainingTime)) remaining")
+                .foregroundColor(coreEngine.coreState.remainingTime < 30 ? .red : .blue)
+            
+            // Sleep interval indicator (auto-recording mode only)
+            if coreEngine.coreState.isInAutoRecordingMode {
+                Text("Sleep Interval \(coreEngine.coreState.currentSleepIntervalNumber)")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+}
+```
+
+**Step 4: Session Processing Queue (QueueCard)**
+```swift
+// Completed sessions are queued for API processing
+struct QueueCard: View {
+    @EnvironmentObject var coreEngine: CoreEngine
+    
+    var body: some View {
+        ForEach(coreEngine.coreState.queueItems) { item in
+            HStack {
+                Text("\(item.session.tagEmoji) \(item.session.tag)")
+                Text(item.session.subtag) // Shows auto-assigned subtag
+                Spacer()
+                Text(item.status.displayText) // "Queued", "Uploading", "Completed", "Failed"
+            }
+        }
+    }
+}
+```
+
+#### **3. Sessions Tab Workflow (Direct Database Access)**
+
+**Database Session Manager (Supabase SDK)**
+```swift
+class DatabaseSessionManager: ObservableObject {
+    @Published var sessions: [DatabaseSession] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    
+    func loadSessions(for userId: String) {
+        // Direct PostgREST query to sessions table
+        let authenticatedClient = PostgrestClient(
+            url: URL(string: "\(SupabaseConfig.url)/rest/v1")!,
+            headers: [
+                "apikey": SupabaseConfig.anonKey,
+                "Authorization": "Bearer \(userToken)"
+            ]
+        )
+        
+        // Query with RLS enforcement
+        authenticatedClient
+            .from("sessions")
+            .select("*")
+            .eq("user_id", value: userId)
+            .order("recorded_at", ascending: false)
+            .execute()
+    }
+}
+```
+
+**Sessions Display**
+```swift
+struct SessionsTabView: View {
+    @StateObject private var databaseSessionManager = DatabaseSessionManager()
+    @EnvironmentObject var coreEngine: CoreEngine
+    
+    var body: some View {
+        ScrollView {
+            // Debug & Diagnostics Card
+            DebugDiagnosticsCard(manager: databaseSessionManager)
+            
+            // Session Data Cards
+            ForEach(databaseSessionManager.sessions) { session in
+                SessionDataCard(session: session)
+            }
+        }
+        .onAppear {
+            if let userId = coreEngine.userId {
+                databaseSessionManager.loadSessions(for: userId)
+            }
+        }
+    }
+}
+```
 
 ### Core Components
 
