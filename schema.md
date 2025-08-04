@@ -2,7 +2,7 @@
 
 > **CRITICAL**: This document serves as the canonical blueprint for rebuilding the entire HRV system. All architectural decisions, data models, and integration patterns are documented here.
 
-## 🗃️ **COMPREHENSIVE DATABASE SCHEMA**
+## **DATABASE SCHEMA**
 
 **⚠️ IMPORTANT:** The complete, production-ready database schema is now consolidated in:
 
@@ -21,7 +21,7 @@ This file includes:
 
 ---
 
-## 📋 OVERVIEW
+## **OVERVIEW**
 
 The unified schema implements a clean, extensible architecture with:
 - **Base Tags**: 6 allowed session types
@@ -31,7 +31,7 @@ The unified schema implements a clean, extensible architecture with:
 
 ---
 
-## 🏷️ TAG STRUCTURE SPECIFICATION
+## **TAG STRUCTURE SPECIFICATION**
 
 ### Base Tags (6 Allowed)
 ```
@@ -50,7 +50,7 @@ The unified schema implements a clean, extensible architecture with:
 
 ---
 
-## 📱 iOS TO API DATA FORMAT
+## **iOS TO API DATA FORMAT**
 
 ### Core Schema Structure
 ```json
@@ -66,7 +66,7 @@ The unified schema implements a clean, extensible architecture with:
 }
 ```
 
-### ⚠️ CRITICAL: SUBTAG AND EVENT_ID ARE ALWAYS NON-OPTIONAL
+### **CRITICAL: SUBTAG AND EVENT_ID ARE ALWAYS NON-OPTIONAL**
 
 #### SUBTAG Rules:
 - **`subtag` is NEVER null/optional** - it's always a non-empty String
@@ -146,25 +146,42 @@ The unified schema implements a clean, extensible architecture with:
 
 ## 🗄️ POSTGRESQL DATABASE SCHEMA
 
-### Users Table (Authentication & Profile)
+### Database Architecture
+**Version**: 4.2.0 ULTIMATE (Single Source of Truth)
+**File**: `database_schema_final.sql`
+**Connection**: Supabase PostgreSQL with Transaction Pooler (IPv4 compatible)
+**Authentication**: Supabase Auth integration with Row Level Security
+
+### Core Tables
+
+#### Profiles Table
 ```sql
-CREATE TABLE profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    display_name VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    last_login TIMESTAMP WITH TIME ZONE,
-    device_name VARCHAR(100),
-    raw_sessions_count INTEGER DEFAULT 0,
-    processed_sessions_count INTEGER DEFAULT 0
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Row Level Security policies
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own profile" ON public.profiles
+    FOR SELECT USING (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile" ON public.profiles
+    FOR UPDATE USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert own profile" ON public.profiles
+    FOR INSERT WITH CHECK (auth.uid() = id);
 ```
 
-### Sessions Table (Unified Raw + Processed)
+#### Sessions Table (Unified Raw + Processed)
 ```sql
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS public.sessions (
     -- Core identifiers
-    session_id UUID PRIMARY KEY,
+    session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     
     -- Session metadata (UNIFIED SCHEMA)
@@ -177,23 +194,27 @@ CREATE TABLE sessions (
     recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
     
     -- Raw data
-    rr_intervals JSONB NOT NULL,
+    rr_intervals DECIMAL[] NOT NULL,    -- Array of RR intervals in milliseconds
     rr_count INTEGER NOT NULL,
     
     -- Processing status
-    status VARCHAR(20) DEFAULT 'uploaded',
+    status VARCHAR(20) DEFAULT 'uploaded' CHECK (status IN ('uploaded', 'processing', 'completed', 'failed')),
     processed_at TIMESTAMP WITH TIME ZONE,
     
-    -- HRV metrics (EXACT REQUIREMENTS)
-    mean_hr DECIMAL(5,2),
-    mean_rr DECIMAL(8,2),
-    count_rr INTEGER,
-    rmssd DECIMAL(8,2),
-    sdnn DECIMAL(8,2),
-    pnn50 DECIMAL(5,2),        -- % of RR diffs > 50ms
-    cv_rr DECIMAL(5,2),        -- Coefficient of variation
-    defa DECIMAL(6,4),         -- DFA α1 (not dfa)
-    sd2_sd1 DECIMAL(8,2),      -- Poincaré ratio
+    -- Legacy support (backward compatibility)
+    sleep_event_id INTEGER,
+    hrv_metrics JSONB,
+    
+    -- Individual HRV metrics (FINAL SCHEMA - v4.1.0+)
+    mean_hr NUMERIC(6,2),              -- Mean heart rate in BPM
+    mean_rr NUMERIC(8,2),              -- Mean RR interval in ms
+    count_rr INTEGER,                  -- Total count of RR intervals
+    rmssd NUMERIC(8,2),                -- Root Mean Square of Successive Differences (ms)
+    sdnn NUMERIC(8,2),                 -- Standard Deviation of NN intervals (ms)
+    pnn50 NUMERIC(6,2),                -- Percentage of NN intervals > 50ms different
+    cv_rr NUMERIC(6,2),                -- Coefficient of Variation of RR intervals
+    defa NUMERIC(6,3),                 -- Detrended Fluctuation Analysis Alpha1
+    sd2_sd1 NUMERIC(6,3),              -- Poincaré plot SD2/SD1 ratio
     
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -201,27 +222,181 @@ CREATE TABLE sessions (
     
     -- Constraints
     CONSTRAINT valid_tag CHECK (tag IN ('rest', 'sleep', 'experiment_paired_pre', 'experiment_paired_post', 'experiment_duration', 'breath_workout')),
-    CONSTRAINT valid_status CHECK (status IN ('uploaded', 'processing', 'completed', 'failed'))
+    CONSTRAINT valid_event_id CHECK (event_id >= 0),
+    CONSTRAINT valid_duration CHECK (duration_minutes > 0),
+    CONSTRAINT valid_rr_count CHECK (rr_count > 0)
 );
+```
+
+### Row Level Security
+```sql
+-- Enable RLS for sessions table
+ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
+
+-- Users can only access their own sessions
+CREATE POLICY "Users can view own sessions" ON public.sessions
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own sessions" ON public.sessions
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own sessions" ON public.sessions
+    FOR UPDATE USING (auth.uid() = user_id);
+```
+
+### Database Functions
+
+#### User Session Statistics Function
+```sql
+CREATE OR REPLACE FUNCTION get_user_session_statistics(target_user_id UUID)
+RETURNS TABLE(
+    uploaded_total BIGINT,
+    processed_total BIGINT,
+    sleep_events BIGINT,
+    uploaded_by_tag JSONB,
+    processed_by_tag JSONB
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        COUNT(*) FILTER (WHERE status != 'completed') as uploaded_total,
+        COUNT(*) FILTER (WHERE status = 'completed') as processed_total,
+        COUNT(DISTINCT event_id) FILTER (WHERE tag = 'sleep' AND event_id > 0) as sleep_events,
+        jsonb_object_agg(tag, count) FILTER (WHERE status != 'completed') as uploaded_by_tag,
+        jsonb_object_agg(tag, count) FILTER (WHERE status = 'completed') as processed_by_tag
+    FROM (
+        SELECT tag, status, COUNT(*) as count
+        FROM public.sessions
+        WHERE user_id = target_user_id
+        GROUP BY tag, status
+    ) subquery;
+END;
+$$;
+```
+
+#### Recent User Sessions Function
+```sql
+CREATE OR REPLACE FUNCTION get_recent_user_sessions(
+    target_user_id UUID,
+    session_limit INTEGER DEFAULT 10,
+    session_offset INTEGER DEFAULT 0
+)
+RETURNS TABLE(
+    session_id UUID,
+    user_id UUID,
+    tag VARCHAR,
+    subtag VARCHAR,
+    event_id INTEGER,
+    duration_minutes INTEGER,
+    recorded_at TIMESTAMP WITH TIME ZONE,
+    rr_count INTEGER,
+    status VARCHAR,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    mean_hr NUMERIC,
+    mean_rr NUMERIC,
+    count_rr INTEGER,
+    rmssd NUMERIC,
+    sdnn NUMERIC,
+    pnn50 NUMERIC,
+    cv_rr NUMERIC,
+    defa NUMERIC,
+    sd2_sd1 NUMERIC,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        s.session_id, s.user_id, s.tag, s.subtag, s.event_id,
+        s.duration_minutes, s.recorded_at, s.rr_count, s.status, s.processed_at,
+        s.mean_hr, s.mean_rr, s.count_rr, s.rmssd, s.sdnn, s.pnn50, s.cv_rr, s.defa, s.sd2_sd1,
+        s.created_at, s.updated_at
+    FROM public.sessions s
+    WHERE s.user_id = target_user_id
+    ORDER BY s.recorded_at DESC
+    LIMIT session_limit
+    OFFSET session_offset;
+END;
+$$;
 ```
 
 ### Performance Indexes
 ```sql
 -- Primary performance indexes
-CREATE INDEX idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX idx_sessions_user_tag ON sessions(user_id, tag);
-CREATE INDEX idx_sessions_event_id ON sessions(event_id) WHERE event_id > 0;
-CREATE INDEX idx_sessions_status ON sessions(status);
-CREATE INDEX idx_sessions_recorded_at ON sessions(recorded_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON public.sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_tag ON public.sessions(user_id, tag);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_status ON public.sessions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_sessions_recorded_at ON public.sessions(recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_event_id ON public.sessions(event_id) WHERE event_id > 0;
+CREATE INDEX IF NOT EXISTS idx_sessions_sleep_events ON public.sessions(user_id, event_id) WHERE tag = 'sleep';
 
--- Composite indexes for common queries
-CREATE INDEX idx_sessions_user_event ON sessions(user_id, event_id) WHERE event_id > 0;
-CREATE INDEX idx_sessions_tag_status ON sessions(tag, status);
+-- Profile indexes
+CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(email);
+```
+
+### Database Connection Configuration
+
+#### Production Configuration (database_config.py)
+```python
+class DatabaseConfig:
+    def __init__(self):
+        # Supabase PostgreSQL with Transaction Pooler (IPv4 compatible)
+        self.host = "aws-0-eu-central-1.pooler.supabase.com"
+        self.database = "postgres"
+        self.user = "postgres.hmckwsyksbckxfxuzxca"
+        self.password = os.environ.get('SUPABASE_DB_PASSWORD')
+        self.port = 6543  # Transaction Pooler port for Railway compatibility
+        
+        # IPv4 resolution for Railway compatibility
+        self.ipv4_host = self._resolve_to_ipv4(self.host)
+        
+        # Connection pool settings (standardized)
+        self.min_connections = 1
+        self.max_connections = 20
+```
+
+#### Database Manager (database_manager.py)
+```python
+def setup_schema():
+    """Execute the unified database schema from database_schema_final.sql"""
+    schema_file = Path('database_schema_final.sql')
+    
+    with open(schema_file, 'r') as f:
+        schema_sql = f.read()
+    
+    conn = get_database_connection()
+    cur = conn.cursor()
+    cur.execute(schema_sql)
+    conn.commit()
+    
+    logger.info("Database schema setup complete")
+
+def validate_connection():
+    """Validate database connection and schema integrity"""
+    conn = get_database_connection()
+    cur = conn.cursor()
+    
+    # Check table existence
+    cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    tables = [row[0] for row in cur.fetchall()]
+    
+    required_tables = ['profiles', 'sessions']
+    for table in required_tables:
+        if table not in tables:
+            raise Exception(f"Required table {table} not found")
+    
+    logger.info("Database validation complete")
 ```
 
 ---
 
-## 🧮 HRV METRICS CALCULATION (Pure NumPy)
+## **HRV METRICS CALCULATION (Pure NumPy)**
 
 ### Complete Implementation
 ```python
@@ -332,7 +507,7 @@ def upload_session():
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'processing')
     """, (data['session_id'], data['user_id'], data['tag'], 
           data['subtag'], data['event_id'], data['duration_minutes'],
-          data['recorded_at'], json.dumps(data['rr_intervals']),
+          data['recorded_at'], data['rr_intervals'],
           len(data['rr_intervals'])))
     
     # Calculate HRV metrics
@@ -362,41 +537,222 @@ def upload_session():
 def get_db_connection():
     """Get PostgreSQL database connection"""
     return psycopg2.connect(
-        host=os.environ.get('DB_HOST'),
-        database=os.environ.get('DB_NAME'),
-        user=os.environ.get('DB_USER'),
-        password=os.environ.get('DB_PASSWORD'),
-        port=os.environ.get('DB_PORT', 5432)
-    )
 ```
 
-### API Endpoints Specification
+#### **2. Get Processed Sessions**
+```python
+@app.route('/api/v1/sessions/processed/<user_id>', methods=['GET'])
+def get_processed_sessions(user_id: str):
+    """
+    Get all processed sessions for a user with pagination
+    Returns sessions with embedded HRV metrics object for iOS compatibility
+    """
+    # Features:
+    # - Pagination support (limit/offset parameters, max 100 per request)
+    # - UUID validation for user_id
+    # - Returns only completed sessions (status = 'completed')
+    # - Formats HRV metrics as nested object for iOS parsing
+    # - Includes total_count for pagination UI
+    
+    # Response Format:
+    {
+        "sessions": [
+            {
+                "session_id": "uuid",
+                "tag": "rest",
+                "subtag": "rest_single",
+                "event_id": 0,
+                "duration_minutes": 5,
+                "recorded_at": "2024-01-15T10:30:00Z",
+                "processed_at": "2024-01-15T10:30:05Z",
+                "status": "completed",
+                "hrv_metrics": {
+                    "mean_hr": 72.5,
+                    "mean_rr": 827.3,
+                    "count_rr": 360,
+                    "rmssd": 45.2,
+                    "sdnn": 52.1,
+                    "pnn50": 15.8,
+                    "cv_rr": 6.3,
+                    "defa": 1.245,
+                    "sd2_sd1": 2.15
+                }
+            }
+        ],
+        "total_count": 25,
+        "limit": 50,
+        "offset": 0
+    }
 ```
-POST /api/v1/sessions/upload          - Upload and process session
-GET  /api/v1/sessions/status/{id}     - Get processing status
-GET  /api/v1/sessions/processed/{uid} - Get processed sessions
-GET  /api/v1/sessions/raw/{uid}       - Get raw sessions  
-GET  /api/v1/sessions/statistics/{uid} - Get session statistics
-DELETE /api/v1/sessions/{id}          - Delete session
-GET  /health                          - Health check
-GET  /health/detailed                 - Detailed health status
+
+#### **3. Session Statistics**
+```python
+@app.route('/api/v1/sessions/statistics/<user_id>', methods=['GET'])
+def get_session_statistics(user_id: str):
+    """
+    Get comprehensive session statistics using PostgreSQL function
+    """
+    # Uses database function: get_user_session_statistics(target_user_id)
+    # Returns aggregated statistics by tag and status
+    # Includes sleep event grouping analysis
+    
+    # Response Format:
+    {
+        "uploaded_total": 5,
+        "processed_total": 20,
+        "sleep_events": 3,
+        "uploaded_by_tag": {
+            "rest": 2,
+            "sleep": 3
+        },
+        "processed_by_tag": {
+            "rest": 15,
+            "sleep": 5
+        }
+    }
+```
+
+#### **4. Session Status Check**
+```python
+@app.route('/api/v1/sessions/status/<session_id>', methods=['GET'])
+def get_session_status(session_id: str):
+    """
+    Get processing status of a specific session
+    """
+    # Returns session status and basic metadata
+    # Used for upload confirmation and debugging
+```
+
+#### **5. Session Deletion**
+```python
+@app.route('/api/v1/sessions/<session_id>', methods=['DELETE'])
+def delete_session(session_id: str):
+    """
+    Delete a session (both raw and processed data)
+    """
+    # Validates session ownership via user context
+    # Removes all session data including RR intervals
+```
+
+#### **6. Health Checks**
+```python
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Basic health check endpoint"""
+    
+@app.route('/health/detailed', methods=['GET'])
+def detailed_health_check():
+    """Detailed health check with database connectivity"""
+    # Tests database connection pool
+    # Validates schema integrity
+    # Returns system status and metrics
+```
+
+### **Data Validation & Processing**
+
+#### **Schema Validation**
+```python
+def validate_session_data(data: Dict) -> Dict[str, str]:
+    """
+    Validate session data against schema.md requirements
+    """
+    # Required fields validation:
+    required_fields = [
+        'session_id', 'user_id', 'tag', 'subtag', 'event_id',
+        'duration_minutes', 'recorded_at', 'rr_intervals'
+    ]
+    
+    # Tag validation (must be in allowed list)
+    # UUID format validation
+    # RR intervals array validation
+    # Duration and timing validation
+```
+
+#### **HRV Metrics Calculation**
+```python
+# Integration with hrv_metrics.py
+hrv_metrics = calculate_hrv_metrics(data['rr_intervals'])
+
+# Returns all 9 metrics:
+{
+    'mean_hr': float,      # Mean heart rate (BPM)
+    'mean_rr': float,      # Mean RR interval (ms)
+    'count_rr': int,       # Total RR intervals
+    'rmssd': float,        # RMSSD (ms)
+    'sdnn': float,         # SDNN (ms)
+    'pnn50': float,        # pNN50 (%)
+    'cv_rr': float,        # CV of RR intervals (%)
+    'defa': float,         # DFA Alpha1
+    'sd2_sd1': float       # Poincaré SD2/SD1 ratio
+}
 ```
 
 ---
 
 ## 📱 iOS IMPLEMENTATION
 
-### Updated Session Model
+### Architecture Overview
+The iOS app implements a hybrid authentication and direct database access pattern:
+
+**Authentication Layer**: HTTP-based Supabase authentication via SupabaseAuthService
+**Database Layer**: Direct PostgreSQL access via Supabase Swift SDK PostgREST client
+**UI Layer**: SwiftUI with clean separation between Record tab and Sessions tab functionality
+
+### Core Components
+
+#### Authentication Service (HTTP-based)
+```swift
+@MainActor
+class SupabaseAuthService: ObservableObject {
+    static let shared = SupabaseAuthService()
+    
+    @Published var isAuthenticated = false
+    @Published var currentUser: SupabaseUser?
+    @Published var userEmail: String?
+    @Published var userId: String?
+    
+    private let supabaseURL = "https://hmckwsyksbckxfxuzxca.supabase.co"
+    private let supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." // Production anon key
+    
+    // HTTP-based authentication methods
+    func signUp(email: String, password: String) async throws
+    func signIn(email: String, password: String) async throws
+    func signOut() async throws
+    func getCurrentAccessToken() async -> String?
+}
+```
+
+#### Database Session Manager (SDK-based)
+```swift
+@MainActor
+class DatabaseSessionManager: ObservableObject {
+    @Published var sessions: [DatabaseSession] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    @Published var debugInfo: [String] = []
+    
+    private let supabase = SupabaseConfig.client
+    
+    func loadSessions(for userId: String) {
+        // Uses authenticated PostgREST client for direct database queries
+        // Bypasses API layer for Sessions tab data loading
+    }
+}
+```
+
+### Data Models
+
+#### Session Model (Recording)
 ```swift
 struct Session: Codable, Identifiable {
-    let id: String                // session_id (UUID)
-    let userId: String           // user_id 
-    let tag: String              // Base tag: "rest", "sleep", etc.
-    let subtag: String           // Semantic subtag: "rest_single", "sleep_interval_1", etc.
-    let eventId: Int             // Event grouping ID: 0 = no grouping, >0 = grouped
-    let duration: Int            // duration_minutes
-    let recordedAt: Date         // recorded_at (ISO8601)
-    let rrIntervals: [Double]    // rr_intervals (milliseconds)
+    let id: String               // session_id (UUID)
+    let userId: String          // user_id (Supabase auth.users.id)
+    let tag: String             // Base tag: "rest", "sleep", etc.
+    let subtag: String          // Auto-assigned: "rest_single", "sleep_interval_1"
+    let eventId: Int            // 0 = standalone, >0 = grouped
+    let duration: Int           // duration_minutes
+    let recordedAt: Date        // recorded_at (ISO8601)
+    let rrIntervals: [Double]   // rr_intervals (milliseconds)
     
     func toAPIPayload() -> [String: Any] {
         return [
@@ -413,18 +769,46 @@ struct Session: Codable, Identifiable {
 }
 ```
 
-### Updated HRV Metrics Model
+#### Database Session Model (Display)
+```swift
+struct DatabaseSession: Codable, Identifiable {
+    let sessionId: String        // session_id
+    let userId: String          // user_id
+    let tag: String             // tag
+    let subtag: String          // subtag
+    let eventId: Int            // event_id (API: snake_case, iOS: camelCase)
+    let status: String          // status: "raw", "processing", "completed", "failed"
+    let durationMinutes: Int    // duration_minutes (API: snake_case, iOS: camelCase)
+    let recordedAt: Date        // recorded_at
+    let processedAt: Date?      // processed_at
+    
+    // HRV Metrics (all 9 metrics, optional for incomplete processing)
+    let meanHr: Double?         // mean_hr
+    let meanRr: Double?         // mean_rr
+    let countRr: Int?           // count_rr
+    let rmssd: Double?          // rmssd
+    let sdnn: Double?           // sdnn
+    let pnn50: Double?          // pnn50
+    let cvRr: Double?           // cv_rr
+    let defa: Double?           // defa
+    let sd2Sd1: Double?         // sd2_sd1
+    
+    var id: String { sessionId }
+}
+```
+
+#### HRV Metrics Model
 ```swift
 struct HRVMetrics: Codable {
-    let meanHr: Double       // mean_hr
-    let meanRr: Double       // mean_rr
-    let countRr: Int         // count_rr
-    let rmssd: Double        // rmssd
-    let sdnn: Double         // sdnn
-    let pnn50: Double        // pnn50 (NEW)
-    let cvRr: Double         // cv_rr (NEW)
-    let defa: Double         // defa (Fixed naming from dfa)
-    let sd2Sd1: Double       // sd2_sd1
+    let meanHr: Double?          // mean_hr (optional for null handling)
+    let meanRr: Double?          // mean_rr
+    let countRr: Int?            // count_rr
+    let rmssd: Double?           // rmssd
+    let sdnn: Double?            // sdnn
+    let pnn50: Double?           // pnn50
+    let cvRr: Double?            // cv_rr
+    let defa: Double?            // defa
+    let sd2Sd1: Double?          // sd2_sd1
     
     enum CodingKeys: String, CodingKey {
         case meanHr = "mean_hr"
@@ -440,19 +824,36 @@ struct HRVMetrics: Codable {
 }
 ```
 
+### Tab Architecture
+
+#### Record Tab
+- **Purpose**: HRV session recording and upload
+- **Components**: SensorCard, ConfigCard, RecordingCard, QueueCard
+- **Data Flow**: Recording → Session creation → API upload via HTTP
+- **Authentication**: Uses SupabaseAuthService.shared.userId for session ownership
+
+#### Sessions Tab
+- **Purpose**: Display all user sessions with debug diagnostics
+- **Data Access**: Direct PostgreSQL queries via Supabase Swift SDK
+- **Authentication**: Uses authenticated PostgREST client with user JWT token
+- **Components**: SessionDataCard, DebugDiagnosticsCard, EmptySessionsCard
+
 ### Session Creation Logic
+
+#### Non-Sleep Sessions
 ```swift
-// For non-sleep tags
 currentSession = Session(
     userId: userId,
-    tag: tag.rawValue,              // "rest", "experiment_paired_pre", etc.
-    subtag: "\(tag.rawValue)_single", // "rest_single", etc.
-    eventId: 0,                     // No grouping
+    tag: tag.rawValue,                    // "rest", "exercise", etc.
+    subtag: "\(tag.rawValue)_single",     // "rest_single", "exercise_single"
+    eventId: 0,                           // Standalone session
     duration: Int(duration),
     rrIntervals: []
 )
+```
 
-// For sleep tags (CoreEngine)
+#### Sleep Sessions (Grouped)
+```swift
 let subtag = "sleep_interval_\(intervalNumber)"  // sleep_interval_1, sleep_interval_2
 let sleepEventId = generateSleepEventId()        // Shared across all intervals
 
@@ -460,10 +861,28 @@ currentSession = Session(
     userId: userId,
     tag: "sleep",
     subtag: subtag,
-    eventId: sleepEventId,          // Grouped
+    eventId: sleepEventId,                // Grouped sessions
     duration: Int(duration),
     rrIntervals: []
 )
+```
+
+### Supabase Configuration
+```swift
+struct SupabaseConfig {
+    static let url = "https://hmckwsyksbckxfxuzxca.supabase.co"
+    static let anonKey = "sb_publishable_oRjabmXPVvT5QMv_5Ec92A_Ytc6xrFr"
+    
+    static let client = PostgrestClient(
+        url: URL(string: "\(url)/rest/v1")!,
+        schema: "public",
+        headers: [
+            "apikey": anonKey,
+            "Authorization": "Bearer \(anonKey)"
+        ],
+        logger: nil
+    )
+}
 ```
 
 ---
@@ -580,7 +999,7 @@ failed      → Processing error occurred
 - **Solution**: Added to requirements.txt:
   ```
   PyJWT==2.8.0
-  supabase==2.3.4
+  supabase==1.0.4
   ```
 
 #### 3. **Gunicorn Issue**: Invalid Arguments
@@ -617,24 +1036,231 @@ failed      → Processing error occurred
   SUPABASE_DB_PORT=6543
   ```
 
-### 📋 Final Environment Variables
-```bash
-SUPABASE_DB_HOST=aws-0-eu-central-1.pooler.supabase.com
-SUPABASE_DB_PORT=6543
-SUPABASE_DB_NAME=postgres
-SUPABASE_DB_USER=postgres.hmckwsyksbckxfxuzxca
-SUPABASE_DB_PASSWORD=[ROTATED-PASSWORD]
-SUPABASE_URL=https://hmckwsyksbckxfxuzxca.supabase.co
-SUPABASE_ANON_KEY=[ROTATED-ANON-KEY]
-SUPABASE_SERVICE_ROLE_KEY=[ROTATED-SERVICE-KEY]
-FLASK_ENV=production
-PORT=5000
-PYTHON_VERSION=3.11.0
-```
 
-### 🎯 Key Takeaways for Future Deployments
+
+### Key Takeaways for Future Deployments
 1. **Always use Supabase Transaction Pooler** for Railway/Heroku deployments
 2. **Check railway.json for invalid Gunicorn arguments** before deployment
 3. **Verify all Python imports have corresponding requirements.txt entries**
 4. **Rotate secrets immediately** if exposed in version control
 5. **Test health endpoint locally** before deploying to production
+
+---
+
+## **DEPLOYMENT ARCHITECTURE**
+
+### **Railway API Deployment**
+
+#### **nixpacks.toml Configuration**
+```toml
+# Railway deployment configuration
+[phases.setup]
+nixPkgs = ["python311", "postgresql"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "gunicorn --bind 0.0.0.0:$PORT app:app"
+```
+
+#### **Production requirements.txt**
+```txt
+Flask==2.3.3
+Flask-CORS==4.0.0
+psycopg2-binary==2.9.9
+numpy==1.26.4
+setuptools==69.5.1
+gunicorn==21.2.0
+Werkzeug==2.3.7
+supabase==1.0.4
+PyJWT==2.8.0
+```
+
+### **Environment Configuration**
+
+#### **Production Environment (Railway)**
+```bash
+# Database Configuration
+DATABASE_URL=postgresql://postgres.hmckwsyksbckxfxuzxca:PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
+SUPABASE_DB_HOST=aws-0-eu-central-1.pooler.supabase.com
+SUPABASE_DB_NAME=postgres
+SUPABASE_DB_USER=postgres.hmckwsyksbckxfxuzxca
+SUPABASE_DB_PASSWORD=your_password_here
+SUPABASE_DB_PORT=6543
+
+# Supabase Configuration
+SUPABASE_URL=https://hmckwsyksbckxfxuzxca.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... # Production anon key
+
+# Application Configuration
+FLASK_ENV=production
+PORT=5000
+PYTHON_VERSION=3.11.0
+```
+
+---
+
+## **CRITICAL FIXES IMPLEMENTED**
+
+### **1. Date Decoding Fix (iOS)**
+**Problem**: iOS couldn't parse API responses with microseconds + timezone offset  
+**Solution**:
+```swift
+// Fixed iOS date parsing for API responses with microseconds + timezone
+let iso8601Formatter = ISO8601DateFormatter()
+iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+// Usage in DatabaseSession model
+static let dateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+```
+
+### **2. PostgreSQL Array Format Fix (API)**
+**Problem**: RR intervals were stored as JSON strings instead of native PostgreSQL arrays  
+**Solution**:
+```python
+# Fixed RR intervals storage - use native PostgreSQL arrays
+cursor.execute("""
+    INSERT INTO sessions (rr_intervals) VALUES (%s)
+""", [rr_intervals])  # Python list → PostgreSQL DECIMAL[]
+
+# NOT: json.dumps(rr_intervals) - this was the bug
+```
+
+### **3. Authentication Token Fix (iOS)**
+**Problem**: PostgREST client wasn't properly authenticated with user tokens  
+**Solution**:
+```swift
+// Fixed PostgREST authentication with proper user tokens
+guard let userToken = await SupabaseAuthService.shared.getCurrentAccessToken() else {
+    throw DatabaseError.authenticationFailed
+}
+
+let authenticatedClient = PostgrestClient(
+    url: URL(string: "\(SupabaseConfig.url)/rest/v1")!,
+    headers: [
+        "apikey": SupabaseConfig.anonKey,
+        "Authorization": "Bearer \(userToken)"
+    ]
+)
+```
+
+### **4. API Key Format Fix**
+**Problem**: Using placeholder/example API keys instead of production format  
+**Solution**:
+```swift
+// Use correct anon key format (production)
+static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." // Production anon key
+// NOT: "sb_publishable_..." - this was placeholder format
+```
+
+### **5. Connection Pool IPv4 Resolution Fix**
+**Problem**: Railway deployment couldn't resolve IPv6 hostnames  
+**Solution**:
+```python
+def _resolve_to_ipv4(self, hostname: str) -> str:
+    """Resolve hostname to IPv4 address for Railway compatibility"""
+    try:
+        addresses = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        if addresses:
+            ipv4_addr = addresses[0][4][0]
+            logger.info(f"Resolved {hostname} to IPv4: {ipv4_addr}")
+            return ipv4_addr
+        else:
+            return hostname
+    except Exception as e:
+        logger.warning(f"Failed to resolve {hostname} to IPv4: {e}")
+        return hostname
+```
+
+---
+
+## **DATA FLOW ARCHITECTURE**
+
+### **Complete Session Lifecycle**
+```
+iOS Recording → API Processing → Database Storage → iOS Display
+
+1. iOS RecordingManager captures RR intervals from HealthKit
+2. Session uploaded to API via HTTP POST /api/v1/sessions/upload
+3. API validates schema, calculates HRV metrics using NumPy
+4. Processed session stored in PostgreSQL with individual metric columns
+5. iOS Sessions tab queries via PostgREST client (direct database access)
+6. Data displayed in clean card-based UI with debug diagnostics
+```
+
+### **Session Data Model Evolution**
+```
+Raw Session (iOS) → API Processing → Database Storage → Display (iOS)
+
+{                    {                 sessions table      DatabaseSession
+  sessionId,         sessionId,        session_id,         sessionId,
+  userId,            userId,           user_id,            userId,
+  tag,               tag,              tag,                tag,
+  subtag,            subtag,           subtag,             subtag,
+  eventId,           eventId,          event_id,           eventId,
+  rrIntervals        rrIntervals       rr_intervals,       (not included)
+}                    + HRV metrics     mean_hr, rmssd...   meanHr, rmssd...
+```
+
+### **Authentication Flow**
+```
+1. User signup/login via SupabaseAuthService (HTTP-based)
+2. JWT token stored securely in iOS
+3. API calls use Bearer token for authentication
+4. PostgREST client uses same token for direct database queries
+5. Row Level Security enforces user isolation at database level
+```
+
+---
+
+## **DEPLOYMENT CHECKLIST**
+
+### **Database Deployment**
+- [ ] Deploy `database_schema_final.sql` to Supabase
+- [ ] Configure Row Level Security policies
+- [ ] Set up database functions and triggers
+- [ ] Verify IPv4/Transaction Pooler connectivity
+- [ ] Test database functions (get_user_session_statistics, get_recent_user_sessions)
+
+### **API Deployment**
+- [ ] Deploy to Railway with `nixpacks.toml`
+- [ ] Configure environment variables (DATABASE_URL, SUPABASE_*)
+- [ ] Test all endpoints with health checks
+- [ ] Verify database connectivity and connection pooling
+- [ ] Test HRV metrics calculation with sample data
+
+### **iOS Configuration**
+- [ ] Install Supabase Swift SDK (PostgREST, Auth modules)
+- [ ] Configure SupabaseConfig with correct keys and URLs
+- [ ] Implement hybrid authentication pattern
+- [ ] Test Sessions tab with PostgREST client
+- [ ] Verify date parsing and JSON decoding
+
+### **Integration Testing**
+- [ ] End-to-end session recording → processing → display
+- [ ] Authentication flow (signup → login → database access)
+- [ ] Error handling and debug logging
+- [ ] Performance and scalability testing
+- [ ] Cross-platform data consistency verification
+
+---
+
+## **RELATED DOCUMENTATION**
+
+- `database_schema_final.sql` - Complete database schema
+- `README.md` - Deployment and setup instructions
+- `admin_db_api_control.ipynb` - Admin management notebook
+- iOS `DatabaseSessionManager.swift` - Direct database access implementation
+- API `app.py` - Complete Flask application
+
+---
+
+**Last Updated**: 2025-08-04  
+**Version**: 6.0.0 FINAL CONSOLIDATED  
+**Status**: Production Ready - Single Golden Asset  
+**Maintainer**: Atriom.Studio
