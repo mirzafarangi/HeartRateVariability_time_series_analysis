@@ -177,7 +177,7 @@ def setup_schema():
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         
         -- Constraints
-        CONSTRAINT sessions_tag_check CHECK (tag IN ('rest', 'sleep', 'experiment_paired_pre', 'experiment_paired_post', 'experiment_single', 'breath_workout')),
+        CONSTRAINT sessions_tag_check CHECK (tag IN ('rest', 'sleep', 'experiment_paired_pre', 'experiment_paired_post', 'experiment_duration', 'breath_workout')),
         CONSTRAINT sessions_status_check CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
         CONSTRAINT sessions_duration_check CHECK (duration_minutes > 0 AND duration_minutes <= 60),
         CONSTRAINT sessions_rr_count_check CHECK (rr_count > 0 AND rr_count = array_length(rr_intervals, 1))

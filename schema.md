@@ -94,7 +94,22 @@ func updateRecordingConfiguration(tag: SessionTag, duration: Int) {
         coreState.recordingMode = .single(tag: tag, duration: duration)
     }
 }
-```
+
+#### **SUBTAG and EVENT_ID Rules**
+
+**SUBTAG Rules:**
+- `subtag` is NEVER null/optional - it's always a non-empty String
+- `subtag` is auto-assigned by iOS based on selected tag
+- User never manually enters subtag - it's computed automatically
+- iOS models must use String (not String?) for subtag field
+
+**EVENT_ID Rules:**
+- `event_id` is NEVER null/optional - it's always a valid Integer
+- `event_id` is auto-assigned by iOS when starting session recording
+- User never manually enters event_id - it's computed automatically
+- iOS models must use Int (not Int?) for eventId field
+- Non-sleep sessions: Always eventId = 0 (no grouping)
+- Sleep/grouped sessions: Always eventId > 0 (shared across related sessions)
 
 #### **Session Recording and Tagging Logic**
 
