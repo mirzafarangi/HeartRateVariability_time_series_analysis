@@ -48,6 +48,103 @@ The unified schema implements a clean, extensible architecture with:
 - **Sleep Sessions**: `eventId > 0` (all intervals in same sleep event share same eventId)
 - **Future Extensions**: `eventId > 0` (e.g., breath workout phases)
 
+### **iOS Recording Workflow Implementation**
+
+#### **Recording Mode Differentiation**
+The iOS app implements two distinct recording modes based on the selected tag:
+
+**1. Single Recording Mode (Non-Sleep Tags)**
+- **Triggers**: `rest`, `experiment_paired_pre`, `experiment_paired_post`, `experiment_duration`, `breath_workout`
+- **Behavior**: User manually starts and stops one session
+- **UI**: "Start Recording" button
+- **Session Creation**: 
+  - `eventId = 0` (no grouping)
+  - `subtag = "{tag}_single"` (e.g., "rest_single")
+  - User controls start/stop timing
+
+**2. Auto-Recording Mode (Sleep Tag)**
+- **Triggers**: `sleep` tag selection
+- **Behavior**: Continuous interval recording until user stops
+- **UI**: "Start Auto-Recording Sleep Event" button
+- **Session Creation**:
+  - `eventId > 0` (grouped sessions, starts from 1001)
+  - `subtag = "sleep_interval_N"` (e.g., "sleep_interval_1", "sleep_interval_2")
+  - Automatic interval progression
+
+#### **Recording Configuration Flow**
+```swift
+// User selects tag and duration in ConfigCard
+func updateRecordingConfiguration(tag: SessionTag, duration: Int) {
+    coreState.selectedTag = tag
+    coreState.selectedDuration = duration
+    
+    if tag.isAutoRecordingMode { // Sleep tag
+        let sleepEventId = coreState.nextSleepEventId // Auto-increment from 1001
+        coreState.recordingMode = .autoRecording(
+            sleepEventId: sleepEventId, 
+            intervalDuration: duration, 
+            currentInterval: 1
+        )
+    } else { // Non-sleep tags
+        coreState.recordingMode = .single(tag: tag, duration: duration)
+    }
+}
+```
+
+#### **Session Recording and Tagging Logic**
+
+**Single Recording Example (Rest Tag):**
+```swift
+// User presses "Start Recording" in RecordingCard
+func startSingleRecording(tag: SessionTag, duration: Int) {
+    let session = Session(
+        userId: currentUserId,
+        tag: tag.rawValue,           // "rest"
+        subtag: "\(tag.rawValue)_single", // "rest_single" (auto-assigned)
+        eventId: 0,                  // No grouping
+        duration: duration,          // User-selected duration (1-60 min)
+        rrIntervals: []              // Populated during recording
+    )
+    
+    recordingManager.startRecording(session)
+}
+```
+
+**Auto-Recording Example (Sleep Tag):**
+```swift
+// User presses "Start Auto-Recording Sleep Event" in RecordingCard
+func startSleepIntervalRecording(sleepEventId: Int, intervalDuration: Int, intervalNumber: Int) {
+    let session = Session(
+        userId: currentUserId,
+        tag: "sleep",                    // Always "sleep"
+        subtag: "sleep_interval_\(intervalNumber)", // "sleep_interval_1", "sleep_interval_2", etc.
+        eventId: sleepEventId,           // 1001, 1002, 1003... (groups all intervals)
+        duration: intervalDuration,     // User-selected interval duration
+        rrIntervals: []                 // Populated during recording
+    )
+    
+    recordingManager.startRecording(session)
+    
+    // After completion, automatically start next interval
+    scheduleNextSleepInterval(sleepEventId, intervalNumber + 1)
+}
+```
+
+#### **Sleep Event Management**
+```swift
+struct SleepEvent {
+    let id: Int              // 1001, 1002, 1003...
+    var intervalCount: Int   // Number of completed intervals
+    var isActive: Bool       // Currently recording intervals
+    
+    // Sleep events auto-increment: first = 1001, second = 1002, etc.
+    static func nextEventId(from history: [SleepEvent]) -> Int {
+        let maxId = history.map { $0.id }.max() ?? 1000
+        return maxId + 1
+    }
+}
+```
+
 ---
 
 ## **iOS TO API DATA FORMAT**
