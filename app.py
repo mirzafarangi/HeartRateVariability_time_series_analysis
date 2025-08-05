@@ -641,13 +641,13 @@ def generate_hrv_trend_plot():
             
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Get processed sessions data
+                # Get sessions data from unified sessions table
                 cursor.execute(
                     """
                     SELECT session_id, tag, subtag, recorded_at, duration_minutes,
                            mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
-                    FROM processed_sessions 
-                    WHERE user_id = %s AND tag = %s AND status = 'completed'
+                    FROM public.sessions 
+                    WHERE user_id = %s AND tag = %s AND mean_hr IS NOT NULL
                     ORDER BY recorded_at ASC
                     """,
                     (user_id, tag)
@@ -661,7 +661,7 @@ def generate_hrv_trend_plot():
                         """
                         SELECT 
                             DATE(recorded_at) as date,
-                            sleep_event_id,
+                            event_id,
                             AVG(mean_hr) as avg_mean_hr,
                             AVG(mean_rr) as avg_mean_rr,
                             AVG(count_rr) as avg_count_rr,
@@ -671,9 +671,9 @@ def generate_hrv_trend_plot():
                             AVG(cv_rr) as avg_cv_rr,
                             AVG(defa) as avg_defa,
                             AVG(sd2_sd1) as avg_sd2_sd1
-                        FROM processed_sessions 
-                        WHERE user_id = %s AND tag = 'sleep' AND status = 'completed' AND sleep_event_id > 0
-                        GROUP BY DATE(recorded_at), sleep_event_id
+                        FROM public.sessions 
+                        WHERE user_id = %s AND tag = 'sleep' AND mean_hr IS NOT NULL AND event_id > 0
+                        GROUP BY DATE(recorded_at), event_id
                         ORDER BY date ASC
                         """,
                         (user_id,)
