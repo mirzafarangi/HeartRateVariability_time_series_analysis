@@ -753,6 +753,62 @@ def get_hrv_trend_plot():
         logger.error(f"Error getting HRV trend plot: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/v1/debug/sessions/<user_id>/<tag>', methods=['GET'])
+def debug_sessions_data(user_id: str, tag: str):
+    """Debug endpoint to check actual session data for plot generation"""
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Check all sessions for this user and tag (without mean_hr filter)
+                cursor.execute(
+                    """
+                    SELECT session_id, tag, subtag, recorded_at, duration_minutes,
+                           mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+                    FROM public.sessions 
+                    WHERE user_id = %s AND tag = %s
+                    ORDER BY recorded_at ASC
+                    """,
+                    (user_id, tag)
+                )
+                all_sessions = [dict(row) for row in cursor.fetchall()]
+                
+                # Check sessions with mean_hr filter
+                cursor.execute(
+                    """
+                    SELECT session_id, tag, subtag, recorded_at, duration_minutes,
+                           mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+                    FROM public.sessions 
+                    WHERE user_id = %s AND tag = %s AND mean_hr IS NOT NULL
+                    ORDER BY recorded_at ASC
+                    """,
+                    (user_id, tag)
+                )
+                filtered_sessions = [dict(row) for row in cursor.fetchall()]
+                
+                return jsonify({
+                    'user_id': user_id,
+                    'tag': tag,
+                    'all_sessions_count': len(all_sessions),
+                    'filtered_sessions_count': len(filtered_sessions),
+                    'all_sessions': all_sessions,
+                    'filtered_sessions': filtered_sessions,
+                    'issue': 'mean_hr filter removing data' if len(all_sessions) > len(filtered_sessions) else 'no issue with filter'
+                })
+                
+        finally:
+            return_db_connection(conn)
+            
+    except Exception as e:
+        logger.error(f"Debug sessions error: {e}")
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+
 @app.route('/api/v1/plots/user/<user_id>', methods=['GET'])
 def get_user_plots(user_id: str):
     """
