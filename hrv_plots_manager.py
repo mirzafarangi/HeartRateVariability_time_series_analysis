@@ -228,6 +228,19 @@ class HRVPlotsManager:
                     
                     if plot_result and plot_result.get('success'):
                         # Store in database
+                        # Extract date range safely
+                        date_range = plot_result['metadata'].get('date_range')
+                        date_range_start = None
+                        date_range_end = None
+                        
+                        if date_range and date_range != 'N/A' and ' to ' in date_range:
+                            try:
+                                date_parts = date_range.split(' to ')
+                                date_range_start = datetime.fromisoformat(date_parts[0])
+                                date_range_end = datetime.fromisoformat(date_parts[1])
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"Failed to parse date range '{date_range}': {e}")
+                        
                         plot_id = self.upsert_plot(
                             user_id=user_id,
                             tag=tag,
@@ -235,8 +248,8 @@ class HRVPlotsManager:
                             plot_image_base64=plot_result['plot_data'],
                             plot_metadata=plot_result['metadata'],
                             data_points_count=plot_result['metadata'].get('data_points', 0),
-                            date_range_start=datetime.fromisoformat(plot_result['metadata']['date_range'].split(' to ')[0]) if plot_result['metadata'].get('date_range') else None,
-                            date_range_end=datetime.fromisoformat(plot_result['metadata']['date_range'].split(' to ')[1]) if plot_result['metadata'].get('date_range') else None
+                            date_range_start=date_range_start,
+                            date_range_end=date_range_end
                         )
                         
                         results[metric] = plot_id is not None
