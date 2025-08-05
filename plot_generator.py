@@ -219,12 +219,48 @@ Count: {len(values)}"""
 def generate_hrv_plot(sessions_data: List[Dict], 
                      sleep_events_data: List[Dict],
                      metric: str, 
-                     tag: str) -> str:
+                     tag: str) -> Dict[str, Any]:
     """
-    Convenience function to generate HRV plot
+    Convenience function to generate HRV plot with error handling
     
     Returns:
-        Base64 encoded PNG image string
+        Dictionary with success status, plot data, and metadata
     """
-    generator = HRVPlotGenerator()
-    return generator.generate_trend_plot(sessions_data, sleep_events_data, metric, tag)
+    try:
+        logger.info(f"Starting plot generation for metric={metric}, tag={tag}")
+        logger.info(f"Sessions data count: {len(sessions_data)}, Sleep events count: {len(sleep_events_data)}")
+        
+        generator = HRVPlotGenerator()
+        plot_base64 = generator.generate_trend_plot(sessions_data, sleep_events_data, metric, tag)
+        
+        # Create metadata
+        metadata = {
+            'metric': metric,
+            'tag': tag,
+            'data_points': len(sessions_data) if tag != 'sleep' else len(sleep_events_data),
+            'date_range': 'N/A',  # Will be calculated properly later
+            'statistics': {
+                'mean': 0.0,
+                'std': 0.0,
+                'min': 0.0,
+                'max': 0.0,
+                'p10': 0.0,
+                'p90': 0.0
+            }
+        }
+        
+        logger.info(f"Plot generation successful for metric={metric}, tag={tag}")
+        return {
+            'success': True,
+            'plot_data': plot_base64,
+            'metadata': metadata
+        }
+        
+    except Exception as e:
+        logger.error(f"Plot generation failed for metric={metric}, tag={tag}: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'plot_data': None,
+            'metadata': None
+        }
