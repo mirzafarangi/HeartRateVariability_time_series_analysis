@@ -22,6 +22,7 @@ from psycopg2.pool import ThreadedConnectionPool
 
 from database_config import DatabaseConfig
 from hrv_metrics import calculate_hrv_metrics
+from plot_generator import generate_hrv_plot
 import jwt
 from supabase import create_client, Client
 
@@ -531,56 +532,175 @@ def get_session_statistics(user_id: str):
 
 @app.route('/api/v1/sessions/<session_id>', methods=['DELETE'])
 def delete_session(session_id: str):
-    """Delete a session (both raw and processed data)"""
+    """
+    Delete a session (both raw and processed data)
+    """
     try:
+        # Validate session_id format
         if not validate_uuid(session_id):
-            return jsonify({'error': 'Invalid session_id format'}), 400
+            return jsonify({
+                'error': 'Invalid session_id format',
+                'details': 'session_id must be a valid UUID'
+            }), 400
         
         conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
         try:
-            cur = conn.cursor()
-            
-            # Check if session exists and get user_id for authorization
-            check_query = "SELECT user_id FROM public.sessions WHERE session_id = %s"
-            cur.execute(check_query, (session_id,))
-            session = cur.fetchone()
-            
-            if not session:
-                return jsonify({'error': 'Session not found'}), 404
-            
-            # Delete session (triggers will update user session counts automatically)
-            delete_query = "DELETE FROM public.sessions WHERE session_id = %s"
-            cur.execute(delete_query, (session_id,))
-            
-            if cur.rowcount == 0:
-                return jsonify({'error': 'Session not found'}), 404
-            
-            conn.commit()
-            cur.close()
-            
-            logger.info(f"Session {session_id} deleted successfully")
-            
-            return jsonify({
-                'status': 'deleted',
-                'session_id': session_id
-            })
-            
+            with conn.cursor() as cursor:
+                # Delete from processed_sessions first (foreign key constraint)
+                cursor.execute(
+                    "DELETE FROM processed_sessions WHERE session_id = %s",
+                    (session_id,)
+                )
+                processed_deleted = cursor.rowcount
+                
+                # Delete from raw_sessions
+                cursor.execute(
+                    "DELETE FROM raw_sessions WHERE session_id = %s",
+                    (session_id,)
+                )
+                raw_deleted = cursor.rowcount
+                
+                conn.commit()
+                
+                if raw_deleted == 0 and processed_deleted == 0:
+                    return jsonify({
+                        'error': 'Session not found',
+                        'session_id': session_id
+                    }), 404
+                
+                return jsonify({
+                    'message': 'Session deleted successfully',
+                    'session_id': session_id,
+                    'deleted': {
+                        'raw_sessions': raw_deleted,
+                        'processed_sessions': processed_deleted
+                    }
+                }), 200
+                
         except Exception as e:
             conn.rollback()
-            logger.error(f"Delete session error: {e}")
-            return jsonify({
-                'error': 'Database operation failed',
-                'details': str(e)
-            }), 500
+            logger.error(f"Database error deleting session {session_id}: {str(e)}")
+            return jsonify({'error': 'Database operation failed'}), 500
+            
         finally:
             return_db_connection(conn)
             
     except Exception as e:
-        logger.error(f"Delete session error: {e}")
-        return jsonify({
-            'error': 'Internal server error',
-            'details': str(e)
-        }), 500
+        logger.error(f"Error deleting session {session_id}: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/hrv-trend', methods=['GET'])
+def generate_hrv_trend_plot():
+    """
+    Generate HRV trend analysis plot for a specific metric and tag
+    
+    Query Parameters:
+        user_id: User ID (required)
+        metric: HRV metric name (required) - one of: mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+        tag: Session tag filter (required) - one of: rest, sleep, experiment_paired_pre, experiment_paired_post, experiment_duration, breath_workout
+        
+    Returns:
+        JSON with base64 encoded PNG image
+    """
+    try:
+        # Get query parameters
+        user_id = request.args.get('user_id')
+        metric = request.args.get('metric')
+        tag = request.args.get('tag')
+        
+        # Validate required parameters
+        if not user_id:
+            return jsonify({'error': 'user_id parameter is required'}), 400
+        if not metric:
+            return jsonify({'error': 'metric parameter is required'}), 400
+        if not tag:
+            return jsonify({'error': 'tag parameter is required'}), 400
+            
+        # Validate metric
+        valid_metrics = ['mean_hr', 'mean_rr', 'count_rr', 'rmssd', 'sdnn', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1']
+        if metric not in valid_metrics:
+            return jsonify({
+                'error': 'Invalid metric',
+                'valid_metrics': valid_metrics
+            }), 400
+            
+        # Validate tag
+        valid_tags = ['rest', 'sleep', 'experiment_paired_pre', 'experiment_paired_post', 'experiment_duration', 'breath_workout']
+        if tag not in valid_tags:
+            return jsonify({
+                'error': 'Invalid tag',
+                'valid_tags': valid_tags
+            }), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Get processed sessions data
+                cursor.execute(
+                    """
+                    SELECT session_id, tag, subtag, recorded_at, duration_minutes,
+                           mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+                    FROM processed_sessions 
+                    WHERE user_id = %s AND tag = %s AND status = 'completed'
+                    ORDER BY recorded_at ASC
+                    """,
+                    (user_id, tag)
+                )
+                sessions_data = [dict(row) for row in cursor.fetchall()]
+                
+                # Get sleep events data if tag is 'sleep'
+                sleep_events_data = []
+                if tag == 'sleep':
+                    cursor.execute(
+                        """
+                        SELECT 
+                            DATE(recorded_at) as date,
+                            sleep_event_id,
+                            AVG(mean_hr) as avg_mean_hr,
+                            AVG(mean_rr) as avg_mean_rr,
+                            AVG(count_rr) as avg_count_rr,
+                            AVG(rmssd) as avg_rmssd,
+                            AVG(sdnn) as avg_sdnn,
+                            AVG(pnn50) as avg_pnn50,
+                            AVG(cv_rr) as avg_cv_rr,
+                            AVG(defa) as avg_defa,
+                            AVG(sd2_sd1) as avg_sd2_sd1
+                        FROM processed_sessions 
+                        WHERE user_id = %s AND tag = 'sleep' AND status = 'completed' AND sleep_event_id > 0
+                        GROUP BY DATE(recorded_at), sleep_event_id
+                        ORDER BY date ASC
+                        """,
+                        (user_id,)
+                    )
+                    sleep_events_data = [dict(row) for row in cursor.fetchall()]
+                
+                # Generate the plot
+                plot_base64 = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
+                
+                return jsonify({
+                    'plot_image': plot_base64,
+                    'metric': metric,
+                    'tag': tag,
+                    'data_points': len(sleep_events_data) if tag == 'sleep' else len(sessions_data),
+                    'generated_at': datetime.now(timezone.utc).isoformat()
+                }), 200
+                
+        except Exception as e:
+            logger.error(f"Database error generating plot for user {user_id}, metric {metric}, tag {tag}: {str(e)}")
+            return jsonify({'error': 'Database operation failed'}), 500
+            
+        finally:
+            return_db_connection(conn)
+            
+    except Exception as e:
+        logger.error(f"Error generating HRV trend plot: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 # =====================================================
 # ERROR HANDLERS
