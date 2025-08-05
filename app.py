@@ -1051,6 +1051,78 @@ def debug_refresh_plots_for_tag(user_id: str, tag: str):
             'debug_info': debug_info if 'debug_info' in locals() else {}
         }), 500
 
+@app.route('/api/v1/plots/refresh-sequential/<user_id>/<tag>', methods=['POST'])
+def refresh_plots_sequential(user_id: str, tag: str):
+    """Sequential plot refresh using working individual generation logic"""
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # HRV metrics to generate plots for
+        metrics = ['mean_hr', 'mean_rr', 'count_rr', 'rmssd', 'sdnn', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1']
+        results = {}
+        successful = 0
+        
+        logger.info(f"Starting sequential plot refresh for user {user_id}, tag {tag}")
+        
+        # Generate each plot individually using the working debug logic
+        for metric in metrics:
+            try:
+                # Get session data
+                sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
+                
+                if not sessions_data and not sleep_events_data:
+                    logger.warning(f"No data found for user {user_id}, tag {tag}")
+                    results[metric] = False
+                    continue
+                
+                # Generate plot using the working individual logic
+                from plot_generator import generate_hrv_plot
+                plot_result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
+                
+                if plot_result and plot_result.get('success'):
+                    # Store in database using the working upsert logic
+                    plot_id = hrv_plots_manager.upsert_plot(
+                        user_id=user_id,
+                        tag=tag,
+                        metric=metric,
+                        plot_image_base64=plot_result['plot_data'],
+                        plot_metadata=plot_result['metadata'],
+                        data_points_count=plot_result['metadata'].get('data_points', 0),
+                        date_range_start=None,
+                        date_range_end=None
+                    )
+                    
+                    if plot_id:
+                        results[metric] = True
+                        successful += 1
+                        logger.info(f"Successfully generated and stored plot for {metric}")
+                    else:
+                        results[metric] = False
+                        logger.error(f"Failed to store plot for {metric}")
+                else:
+                    results[metric] = False
+                    logger.error(f"Failed to generate plot for {metric}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing {metric}: {str(e)}")
+                results[metric] = False
+        
+        return jsonify({
+            'success': True,
+            'tag': tag,
+            'refresh_results': results,
+            'summary': {
+                'total': len(metrics),
+                'successful': successful,
+                'success_rate': successful / len(metrics)
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Sequential plot refresh failed: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/api/v1/plots/refresh/<user_id>/<tag>', methods=['POST'])
 def refresh_plots_for_tag(user_id: str, tag: str):
     """
