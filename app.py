@@ -892,6 +892,95 @@ def get_user_plots(user_id: str):
         logger.error(f"Error getting user plots: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/v1/debug/plots/refresh/<user_id>/<tag>', methods=['POST'])
+def debug_refresh_plots_for_tag(user_id: str, tag: str):
+    """Debug version of plot refresh with detailed error reporting"""
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        logger.info(f"DEBUG: Starting plot refresh for user {user_id}, tag {tag}")
+        
+        # Test each step individually
+        debug_info = {
+            'user_id': user_id,
+            'tag': tag,
+            'steps': {}
+        }
+        
+        # Step 1: Test session data retrieval
+        try:
+            sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
+            debug_info['steps']['data_retrieval'] = {
+                'success': True,
+                'sessions_count': len(sessions_data),
+                'sleep_events_count': len(sleep_events_data)
+            }
+            logger.info(f"DEBUG: Data retrieval successful - {len(sessions_data)} sessions")
+        except Exception as e:
+            debug_info['steps']['data_retrieval'] = {
+                'success': False,
+                'error': str(e)
+            }
+            return jsonify(debug_info), 500
+        
+        # Step 2: Test plot generation for one metric
+        try:
+            from plot_generator import generate_hrv_plot
+            test_result = generate_hrv_plot(sessions_data, sleep_events_data, 'rmssd', tag)
+            debug_info['steps']['plot_generation'] = {
+                'success': test_result.get('success') if test_result else False,
+                'has_plot_data': bool(test_result.get('plot_data')) if test_result else False,
+                'has_metadata': bool(test_result.get('metadata')) if test_result else False,
+                'error': test_result.get('error') if test_result and not test_result.get('success') else None
+            }
+            logger.info(f"DEBUG: Plot generation test - success: {test_result.get('success')}")
+        except Exception as e:
+            debug_info['steps']['plot_generation'] = {
+                'success': False,
+                'error': str(e)
+            }
+            return jsonify(debug_info), 500
+        
+        # Step 3: Test database upsert
+        if test_result and test_result.get('success'):
+            try:
+                plot_id = hrv_plots_manager.upsert_plot(
+                    user_id=user_id,
+                    tag=tag,
+                    metric='rmssd',
+                    plot_image_base64=test_result['plot_data'],
+                    plot_metadata=test_result['metadata'],
+                    data_points_count=test_result['metadata'].get('data_points', 0),
+                    date_range_start=None,
+                    date_range_end=None
+                )
+                debug_info['steps']['database_upsert'] = {
+                    'success': True,
+                    'plot_id': str(plot_id) if plot_id else None
+                }
+                logger.info(f"DEBUG: Database upsert successful - plot_id: {plot_id}")
+            except Exception as e:
+                debug_info['steps']['database_upsert'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+                return jsonify(debug_info), 500
+        
+        return jsonify({
+            'debug_success': True,
+            'message': 'All steps completed successfully',
+            'debug_info': debug_info
+        })
+        
+    except Exception as e:
+        logger.error(f"DEBUG: Unexpected error in plot refresh debug: {str(e)}")
+        return jsonify({
+            'debug_success': False,
+            'error': str(e),
+            'debug_info': debug_info if 'debug_info' in locals() else {}
+        }), 500
+
 @app.route('/api/v1/plots/refresh/<user_id>/<tag>', methods=['POST'])
 def refresh_plots_for_tag(user_id: str, tag: str):
     """
