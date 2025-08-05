@@ -13,16 +13,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-# Import required modules at top level to avoid circular import issues
-try:
-    from plot_generator import generate_hrv_plot
-except ImportError:
-    generate_hrv_plot = None
-    
-try:
-    from app import get_sessions_data_for_plot
-except ImportError:
-    get_sessions_data_for_plot = None
+# Note: plot_generator and app imports are done dynamically in methods to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
@@ -248,9 +239,12 @@ class HRVPlotsManager:
         Returns:
             Dictionary with success status for each metric
         """
-        # Check if required functions are available
-        if generate_hrv_plot is None or get_sessions_data_for_plot is None:
-            logger.error("Required functions not available due to import issues")
+        # Import required functions dynamically to avoid circular imports
+        try:
+            from plot_generator import generate_hrv_plot
+            from app import get_sessions_data_for_plot
+        except ImportError as e:
+            logger.error(f"Failed to import required functions: {e}")
             return {metric: False for metric in ['mean_hr', 'mean_rr', 'count_rr', 'rmssd', 'sdnn', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1']}
         
         # HRV metrics to generate plots for
