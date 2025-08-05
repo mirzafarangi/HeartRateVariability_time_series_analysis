@@ -223,8 +223,10 @@ class HRVPlotsManager:
             # Generate and store plot for each metric
             for metric in metrics:
                 try:
+                    logger.info(f"Starting plot generation for metric: {metric}")
                     # Generate plot
                     plot_result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
+                    logger.info(f"Plot generation result for {metric}: success={plot_result.get('success') if plot_result else 'None'}")
                     
                     if plot_result and plot_result.get('success'):
                         # Store in database
@@ -241,16 +243,23 @@ class HRVPlotsManager:
                             except (ValueError, IndexError) as e:
                                 logger.warning(f"Failed to parse date range '{date_range}': {e}")
                         
-                        plot_id = self.upsert_plot(
-                            user_id=user_id,
-                            tag=tag,
-                            metric=metric,
-                            plot_image_base64=plot_result['plot_data'],
-                            plot_metadata=plot_result['metadata'],
-                            data_points_count=plot_result['metadata'].get('data_points', 0),
-                            date_range_start=date_range_start,
-                            date_range_end=date_range_end
-                        )
+                        try:
+                            logger.info(f"Attempting to upsert plot for {metric}")
+                            plot_id = self.upsert_plot(
+                                user_id=user_id,
+                                tag=tag,
+                                metric=metric,
+                                plot_image_base64=plot_result['plot_data'],
+                                plot_metadata=plot_result['metadata'],
+                                data_points_count=plot_result['metadata'].get('data_points', 0),
+                                date_range_start=date_range_start,
+                                date_range_end=date_range_end
+                            )
+                            logger.info(f"Successfully upserted plot for {metric}, plot_id: {plot_id}")
+                        except Exception as upsert_error:
+                            logger.error(f"Upsert failed for {metric}: {str(upsert_error)}")
+                            results[metric] = False
+                            continue
                         
                         results[metric] = plot_id is not None
                         logger.info(f"Successfully refreshed plot for {metric}, tag {tag}")
