@@ -1110,11 +1110,17 @@ def refresh_plots_sequential(user_id: str, tag: str):
         # Generate each plot individually using the working debug logic
         for metric in metrics:
             try:
+                logger.info(f"Processing metric: {metric}")
+                
                 # Generate plot using the working individual logic (data already retrieved)
                 from plot_generator import generate_hrv_plot
                 plot_result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
                 
+                logger.info(f"Plot generation result for {metric}: success={plot_result.get('success') if plot_result else False}")
+                
                 if plot_result and plot_result.get('success'):
+                    logger.info(f"Attempting to store plot for {metric}")
+                    
                     # Store in database using the working upsert logic
                     plot_id = hrv_plots_manager.upsert_plot(
                         user_id=user_id,
@@ -1127,19 +1133,24 @@ def refresh_plots_sequential(user_id: str, tag: str):
                         date_range_end=None
                     )
                     
+                    logger.info(f"Database upsert result for {metric}: plot_id={plot_id}")
+                    
                     if plot_id:
                         results[metric] = True
                         successful += 1
-                        logger.info(f"Successfully generated and stored plot for {metric}")
+                        logger.info(f"✅ Successfully generated and stored plot for {metric}")
                     else:
                         results[metric] = False
-                        logger.error(f"Failed to store plot for {metric}")
+                        logger.error(f"❌ Failed to store plot for {metric} - upsert returned None")
                 else:
                     results[metric] = False
-                    logger.error(f"Failed to generate plot for {metric}")
+                    error_msg = plot_result.get('error') if plot_result else 'No plot result returned'
+                    logger.error(f"❌ Failed to generate plot for {metric}: {error_msg}")
                     
             except Exception as e:
-                logger.error(f"Error processing {metric}: {str(e)}")
+                logger.error(f"❌ Exception processing {metric}: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 results[metric] = False
         
         return jsonify({
