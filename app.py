@@ -908,6 +908,34 @@ def debug_refresh_plots_for_tag(user_id: str, tag: str):
             'steps': {}
         }
         
+        # Step 0: Validate database table exists
+        try:
+            conn = hrv_plots_manager.connection_pool.getconn()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT column_name, data_type, is_nullable 
+                FROM information_schema.columns 
+                WHERE table_name = 'hrv_plots' AND table_schema = 'public'
+                ORDER BY ordinal_position
+            """)
+            columns = cur.fetchall()
+            debug_info['steps']['table_validation'] = {
+                'success': True,
+                'table_exists': len(columns) > 0,
+                'column_count': len(columns),
+                'columns': [{'name': col[0], 'type': col[1], 'nullable': col[2]} for col in columns[:5]]  # First 5 columns
+            }
+            hrv_plots_manager.connection_pool.putconn(conn)
+            logger.info(f"DEBUG: Table validation - {len(columns)} columns found")
+        except Exception as e:
+            debug_info['steps']['table_validation'] = {
+                'success': False,
+                'error': str(e)
+            }
+            if 'conn' in locals():
+                hrv_plots_manager.connection_pool.putconn(conn)
+            return jsonify(debug_info), 500
+        
         # Step 1: Test session data retrieval
         try:
             sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)

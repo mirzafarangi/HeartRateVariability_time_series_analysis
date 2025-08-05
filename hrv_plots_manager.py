@@ -91,6 +91,16 @@ class HRVPlotsManager:
             
             result = cur.fetchone()
             plot_id = result[0] if result else None
+            
+            # Explicit check for silent failure
+            if plot_id is None:
+                logger.error(f"Database upsert returned NULL plot_id - silent failure detected")
+                logger.error(f"Parameters: user_id={user_id}, tag={tag}, metric={metric}")
+                logger.error(f"Data lengths: plot_data={len(plot_image_base64)}, metadata={len(json.dumps(plot_metadata))}")
+                # Check if there were any database warnings or notices
+                for notice in conn.notices:
+                    logger.error(f"Database notice: {notice}")
+            
             conn.commit()
             
             logger.info(f"Successfully upserted plot for user {user_id}, tag {tag}, metric {metric}")
