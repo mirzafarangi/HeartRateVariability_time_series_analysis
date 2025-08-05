@@ -753,6 +753,48 @@ def get_hrv_trend_plot():
         logger.error(f"Error getting HRV trend plot: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/v1/debug/plot-test/<user_id>/<tag>/<metric>', methods=['GET'])
+def debug_plot_generation(user_id: str, tag: str, metric: str):
+    """Debug endpoint to test plot generation with detailed error reporting"""
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Get session data
+        sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
+        
+        if not sessions_data and not sleep_events_data:
+            return jsonify({
+                'error': 'No data found',
+                'sessions_count': 0,
+                'sleep_events_count': 0
+            })
+        
+        # Test minimal plot generation
+        try:
+            from plot_generator import generate_hrv_plot
+            result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
+            
+            return jsonify({
+                'success': True,
+                'sessions_count': len(sessions_data),
+                'sleep_events_count': len(sleep_events_data),
+                'plot_generation_result': result,
+                'test_data_sample': sessions_data[0] if sessions_data else None
+            })
+            
+        except Exception as plot_error:
+            return jsonify({
+                'error': 'Plot generation failed',
+                'plot_error': str(plot_error),
+                'sessions_count': len(sessions_data),
+                'sleep_events_count': len(sleep_events_data),
+                'test_data_sample': sessions_data[0] if sessions_data else None
+            })
+            
+    except Exception as e:
+        return jsonify({'error': 'Debug test failed', 'details': str(e)}), 500
+
 @app.route('/api/v1/debug/sessions/<user_id>/<tag>', methods=['GET'])
 def debug_sessions_data(user_id: str, tag: str):
     """Debug endpoint to check actual session data for plot generation"""
