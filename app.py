@@ -1083,18 +1083,34 @@ def refresh_plots_sequential(user_id: str, tag: str):
         
         logger.info(f"Starting sequential plot refresh for user {user_id}, tag {tag}")
         
+        # Get session data once (like the working debug endpoint)
+        try:
+            sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
+            
+            if not sessions_data and not sleep_events_data:
+                logger.warning(f"No data found for user {user_id}, tag {tag}")
+                return jsonify({
+                    'success': True,
+                    'tag': tag,
+                    'refresh_results': {metric: False for metric in metrics},
+                    'summary': {
+                        'total': len(metrics),
+                        'successful': 0,
+                        'success_rate': 0.0
+                    },
+                    'error': 'No session data found'
+                })
+                
+            logger.info(f"Found {len(sessions_data)} sessions and {len(sleep_events_data)} sleep events")
+            
+        except Exception as e:
+            logger.error(f"Error getting session data: {str(e)}")
+            return jsonify({'error': 'Failed to retrieve session data'}), 500
+        
         # Generate each plot individually using the working debug logic
         for metric in metrics:
             try:
-                # Get session data
-                sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
-                
-                if not sessions_data and not sleep_events_data:
-                    logger.warning(f"No data found for user {user_id}, tag {tag}")
-                    results[metric] = False
-                    continue
-                
-                # Generate plot using the working individual logic
+                # Generate plot using the working individual logic (data already retrieved)
                 from plot_generator import generate_hrv_plot
                 plot_result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
                 
