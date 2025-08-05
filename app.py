@@ -942,9 +942,13 @@ def debug_refresh_plots_for_tag(user_id: str, tag: str):
             }
             return jsonify(debug_info), 500
         
-        # Step 3: Test database upsert
+        # Step 3: Test database upsert with detailed error handling
         if test_result and test_result.get('success'):
             try:
+                logger.info(f"DEBUG: About to test database upsert with data: user_id={user_id}, tag={tag}")
+                logger.info(f"DEBUG: Plot data length: {len(test_result['plot_data']) if test_result.get('plot_data') else 0}")
+                logger.info(f"DEBUG: Metadata: {test_result['metadata']}")
+                
                 plot_id = hrv_plots_manager.upsert_plot(
                     user_id=user_id,
                     tag=tag,
@@ -955,12 +959,29 @@ def debug_refresh_plots_for_tag(user_id: str, tag: str):
                     date_range_start=None,
                     date_range_end=None
                 )
-                debug_info['steps']['database_upsert'] = {
-                    'success': True,
-                    'plot_id': str(plot_id) if plot_id else None
-                }
-                logger.info(f"DEBUG: Database upsert successful - plot_id: {plot_id}")
+                
+                logger.info(f"DEBUG: Database upsert completed - plot_id: {plot_id}, type: {type(plot_id)}")
+                
+                # Test if plot was actually stored by querying it back
+                try:
+                    stored_plot = hrv_plots_manager.get_plot_by_tag_metric(user_id, tag, 'rmssd')
+                    debug_info['steps']['database_upsert'] = {
+                        'success': True,
+                        'plot_id': str(plot_id) if plot_id else None,
+                        'plot_stored': bool(stored_plot),
+                        'stored_plot_id': stored_plot.get('plot_id') if stored_plot else None
+                    }
+                except Exception as query_error:
+                    debug_info['steps']['database_upsert'] = {
+                        'success': True,
+                        'plot_id': str(plot_id) if plot_id else None,
+                        'plot_stored': 'query_failed',
+                        'query_error': str(query_error)
+                    }
+                
+                logger.info(f"DEBUG: Database upsert test completed")
             except Exception as e:
+                logger.error(f"DEBUG: Database upsert failed with error: {str(e)}")
                 debug_info['steps']['database_upsert'] = {
                     'success': False,
                     'error': str(e)
