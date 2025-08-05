@@ -1060,6 +1060,90 @@ def debug_refresh_plots_for_tag(user_id: str, tag: str):
             'debug_info': debug_info if 'debug_info' in locals() else {}
         }), 500
 
+@app.route('/api/v1/plots/refresh-simple/<user_id>/<tag>', methods=['POST'])
+def refresh_plots_simple(user_id: str, tag: str):
+    """Simple plot refresh using proven working debug logic for each metric"""
+    global hrv_plots_manager
+    
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Ensure HRV plots manager is initialized
+        if hrv_plots_manager is None:
+            logger.info("HRV plots manager not initialized, initializing now...")
+            initialize_connection_pool()
+            if hrv_plots_manager is None:
+                return jsonify({'error': 'Failed to initialize plot manager'}), 500
+        
+        # HRV metrics to generate plots for
+        metrics = ['mean_hr', 'mean_rr', 'count_rr', 'rmssd', 'sdnn', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1']
+        results = {}
+        successful = 0
+        
+        logger.info(f"Starting simple plot refresh for user {user_id}, tag {tag}")
+        
+        # Process each metric using the EXACT same logic as the working debug endpoint
+        for metric in metrics:
+            try:
+                logger.info(f"Processing {metric} using debug endpoint logic...")
+                
+                # Step 1: Get session data (exactly like debug endpoint)
+                sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
+                
+                if not sessions_data and not sleep_events_data:
+                    logger.warning(f"No data found for {metric}")
+                    results[metric] = False
+                    continue
+                
+                # Step 2: Generate plot (exactly like debug endpoint)
+                from plot_generator import generate_hrv_plot
+                plot_result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
+                
+                if not plot_result or not plot_result.get('success'):
+                    logger.error(f"Plot generation failed for {metric}")
+                    results[metric] = False
+                    continue
+                
+                # Step 3: Store in database (exactly like debug endpoint)
+                plot_id = hrv_plots_manager.upsert_plot(
+                    user_id=user_id,
+                    tag=tag,
+                    metric=metric,
+                    plot_image_base64=plot_result['plot_data'],
+                    plot_metadata=plot_result['metadata'],
+                    data_points_count=plot_result['metadata'].get('data_points', 0),
+                    date_range_start=None,
+                    date_range_end=None
+                )
+                
+                if plot_id:
+                    results[metric] = True
+                    successful += 1
+                    logger.info(f"✅ SUCCESS: {metric} plot generated and stored (ID: {plot_id})")
+                else:
+                    results[metric] = False
+                    logger.error(f"❌ FAILED: {metric} database storage failed")
+                    
+            except Exception as e:
+                logger.error(f"❌ EXCEPTION processing {metric}: {str(e)}")
+                results[metric] = False
+        
+        return jsonify({
+            'success': True,
+            'tag': tag,
+            'refresh_results': results,
+            'summary': {
+                'total': len(metrics),
+                'successful': successful,
+                'success_rate': successful / len(metrics)
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Simple plot refresh failed: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/api/v1/plots/refresh-sequential/<user_id>/<tag>', methods=['POST'])
 def refresh_plots_sequential(user_id: str, tag: str):
     """Sequential plot refresh using working individual generation logic"""
