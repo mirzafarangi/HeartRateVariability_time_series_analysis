@@ -23,6 +23,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from database_config import DatabaseConfig
 from hrv_metrics import calculate_hrv_metrics
 from plot_generator import generate_hrv_plot
+from hrv_plots_manager import HRVPlotsManager
 import jwt
 from supabase import create_client, Client
 
@@ -40,12 +41,13 @@ CORS(app)
 # Initialize database configuration
 db_config = DatabaseConfig()
 
-# Global connection pool
+# Global connection pool and plot manager
 connection_pool = None
+hrv_plots_manager = None
 
 def initialize_connection_pool():
-    """Initialize PostgreSQL connection pool"""
-    global connection_pool
+    """Initialize PostgreSQL connection pool and HRV plots manager"""
+    global connection_pool, hrv_plots_manager
     try:
         connection_pool = ThreadedConnectionPool(
             minconn=1,
@@ -57,9 +59,13 @@ def initialize_connection_pool():
             port=db_config.port,
             cursor_factory=RealDictCursor
         )
-        logger.info("✅ Database connection pool initialized")
+        
+        # Initialize HRV plots manager
+        hrv_plots_manager = HRVPlotsManager(connection_pool)
+        
+        logger.info("Database connection pool and HRV plots manager initialized successfully")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize connection pool: {e}")
+        logger.error(f"Failed to initialize connection pool: {e}")
         raise
 
 def get_db_connection():
@@ -183,6 +189,61 @@ def validate_uuid(uuid_string: str) -> bool:
         return True
     except ValueError:
         return False
+
+def get_sessions_data_for_plot(user_id: str, tag: str):
+    """Helper function to get sessions data for plot generation"""
+    conn = get_db_connection()
+    if not conn:
+        return [], []
+        
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Get sessions data from unified sessions table
+            cursor.execute(
+                """
+                SELECT session_id, tag, subtag, recorded_at, duration_minutes,
+                       mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+                FROM public.sessions 
+                WHERE user_id = %s AND tag = %s AND mean_hr IS NOT NULL
+                ORDER BY recorded_at ASC
+                """,
+                (user_id, tag)
+            )
+            sessions_data = [dict(row) for row in cursor.fetchall()]
+            
+            # Get sleep events data if tag is 'sleep'
+            sleep_events_data = []
+            if tag == 'sleep':
+                cursor.execute(
+                    """
+                    SELECT 
+                        DATE(recorded_at) as date,
+                        event_id,
+                        AVG(mean_hr) as avg_mean_hr,
+                        AVG(mean_rr) as avg_mean_rr,
+                        AVG(count_rr) as avg_count_rr,
+                        AVG(rmssd) as avg_rmssd,
+                        AVG(sdnn) as avg_sdnn,
+                        AVG(pnn50) as avg_pnn50,
+                        AVG(cv_rr) as avg_cv_rr,
+                        AVG(defa) as avg_defa,
+                        AVG(sd2_sd1) as avg_sd2_sd1
+                    FROM public.sessions 
+                    WHERE user_id = %s AND tag = 'sleep' AND mean_hr IS NOT NULL AND event_id > 0
+                    GROUP BY DATE(recorded_at), event_id
+                    ORDER BY date ASC
+                    """,
+                    (user_id,)
+                )
+                sleep_events_data = [dict(row) for row in cursor.fetchall()]
+            
+            return sessions_data, sleep_events_data
+            
+    except Exception as e:
+        logger.error(f"Error getting sessions data for plot: {e}")
+        return [], []
+    finally:
+        return_db_connection(conn)
 
 # =====================================================
 # API ENDPOINTS
@@ -328,6 +389,14 @@ def upload_session():
             cur.close()
             
             logger.info(f"Session {data['session_id']} uploaded and processed successfully")
+            
+            # Refresh plots for this user and tag (async in background)
+            try:
+                plot_refresh_results = hrv_plots_manager.refresh_plots_for_user_tag(data['user_id'], data['tag'])
+                logger.info(f"Plot refresh results for user {data['user_id']}, tag {data['tag']}: {plot_refresh_results}")
+            except Exception as e:
+                logger.warning(f"Failed to refresh plots for user {data['user_id']}, tag {data['tag']}: {e}")
+                # Don't fail the session upload if plot refresh fails
             
             # Return success response with metrics
             return jsonify({
@@ -614,9 +683,9 @@ def delete_session(session_id: str):
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/v1/plots/hrv-trend', methods=['GET'])
-def generate_hrv_trend_plot():
+def get_hrv_trend_plot():
     """
-    Generate HRV trend analysis plot for a specific metric and tag
+    Get HRV trend analysis plot from database (persistent storage)
     
     Query Parameters:
         user_id: User ID (required)
@@ -624,7 +693,7 @@ def generate_hrv_trend_plot():
         tag: Session tag filter (required) - one of: rest, sleep, experiment_paired_pre, experiment_paired_post, experiment_duration, breath_workout
         
     Returns:
-        JSON with base64 encoded PNG image
+        JSON with base64 encoded PNG image from database
     """
     try:
         # Get query parameters
@@ -658,71 +727,135 @@ def generate_hrv_trend_plot():
                 'valid_tags': valid_tags
             }), 400
         
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({'error': 'Database connection failed'}), 500
-            
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Get sessions data from unified sessions table
-                cursor.execute(
-                    """
-                    SELECT session_id, tag, subtag, recorded_at, duration_minutes,
-                           mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
-                    FROM public.sessions 
-                    WHERE user_id = %s AND tag = %s AND mean_hr IS NOT NULL
-                    ORDER BY recorded_at ASC
-                    """,
-                    (user_id, tag)
-                )
-                sessions_data = [dict(row) for row in cursor.fetchall()]
-                
-                # Get sleep events data if tag is 'sleep'
-                sleep_events_data = []
-                if tag == 'sleep':
-                    cursor.execute(
-                        """
-                        SELECT 
-                            DATE(recorded_at) as date,
-                            event_id,
-                            AVG(mean_hr) as avg_mean_hr,
-                            AVG(mean_rr) as avg_mean_rr,
-                            AVG(count_rr) as avg_count_rr,
-                            AVG(rmssd) as avg_rmssd,
-                            AVG(sdnn) as avg_sdnn,
-                            AVG(pnn50) as avg_pnn50,
-                            AVG(cv_rr) as avg_cv_rr,
-                            AVG(defa) as avg_defa,
-                            AVG(sd2_sd1) as avg_sd2_sd1
-                        FROM public.sessions 
-                        WHERE user_id = %s AND tag = 'sleep' AND mean_hr IS NOT NULL AND event_id > 0
-                        GROUP BY DATE(recorded_at), event_id
-                        ORDER BY date ASC
-                        """,
-                        (user_id,)
-                    )
-                    sleep_events_data = [dict(row) for row in cursor.fetchall()]
-                
-                # Generate the plot
-                plot_base64 = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
-                
-                return jsonify({
-                    'plot_image': plot_base64,
-                    'metric': metric,
-                    'tag': tag,
-                    'data_points': len(sleep_events_data) if tag == 'sleep' else len(sessions_data),
-                    'generated_at': datetime.now(timezone.utc).isoformat()
-                }), 200
-                
-        except Exception as e:
-            logger.error(f"Database error generating plot for user {user_id}, metric {metric}, tag {tag}: {str(e)}")
-            return jsonify({'error': 'Database operation failed'}), 500
-            
-        finally:
-            return_db_connection(conn)
+        # Get plot from database using HRV plots manager
+        plot_data = hrv_plots_manager.get_plot_by_tag_metric(user_id, tag, metric)
+        
+        if plot_data:
+            # Return existing plot from database
+            return jsonify({
+                'success': True,
+                'plot_data': plot_data['plot_image_base64'],
+                'metadata': plot_data['plot_metadata'],
+                'cached': True,
+                'last_updated': plot_data['updated_at'].isoformat() if plot_data['updated_at'] else None
+            })
+        else:
+            # No plot found in database - need to generate and store
+            # This should rarely happen if plots are properly maintained
+            return jsonify({
+                'success': False,
+                'error': 'Plot not found in database',
+                'message': 'Plot needs to be generated. Please record some sessions first.',
+                'cached': False
+            }), 404
             
     except Exception as e:
-        logger.error(f"Error generating HRV trend plot: {str(e)}")
+        logger.error(f"Error getting HRV trend plot: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/user/<user_id>', methods=['GET'])
+def get_user_plots(user_id: str):
+    """
+    Get all plots for a user from database
+    
+    Returns:
+        JSON with all user plots organized by tag and metric
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        plots = hrv_plots_manager.get_user_plots(user_id)
+        
+        # Organize plots by tag and metric for easy consumption
+        organized_plots = {}
+        for plot in plots:
+            tag = plot['tag']
+            metric = plot['metric']
+            
+            if tag not in organized_plots:
+                organized_plots[tag] = {}
+            
+            organized_plots[tag][metric] = {
+                'plot_id': plot['plot_id'],
+                'plot_image_base64': plot['plot_image_base64'],
+                'metadata': plot['plot_metadata'],
+                'data_points_count': plot['data_points_count'],
+                'last_updated': plot['updated_at'].isoformat() if plot['updated_at'] else None
+            }
+        
+        return jsonify({
+            'success': True,
+            'plots': organized_plots,
+            'total_plots': len(plots)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting user plots: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/refresh/<user_id>/<tag>', methods=['POST'])
+def refresh_plots_for_tag(user_id: str, tag: str):
+    """
+    Refresh all plots for a specific user and tag
+    
+    Returns:
+        JSON with refresh results for each metric
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Validate tag
+        valid_tags = ['rest', 'sleep', 'experiment_paired_pre', 'experiment_paired_post', 'experiment_duration', 'breath_workout']
+        if tag not in valid_tags:
+            return jsonify({
+                'error': 'Invalid tag',
+                'valid_tags': valid_tags
+            }), 400
+        
+        # Refresh plots for this user and tag
+        refresh_results = hrv_plots_manager.refresh_plots_for_user_tag(user_id, tag)
+        
+        success_count = sum(1 for success in refresh_results.values() if success)
+        total_count = len(refresh_results)
+        
+        return jsonify({
+            'success': True,
+            'tag': tag,
+            'refresh_results': refresh_results,
+            'summary': {
+                'successful': success_count,
+                'total': total_count,
+                'success_rate': success_count / total_count if total_count > 0 else 0
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error refreshing plots for user {user_id}, tag {tag}: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/statistics/<user_id>', methods=['GET'])
+def get_plot_statistics(user_id: str):
+    """
+    Get plot statistics summary for a user
+    
+    Returns:
+        JSON with plot statistics by tag
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        statistics = hrv_plots_manager.get_plot_statistics_summary(user_id)
+        
+        return jsonify({
+            'success': True,
+            'statistics': statistics
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting plot statistics: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
 # =====================================================

@@ -1,6 +1,10 @@
-# HRV App Unified Data Schema Architecture
+# HRV Brain Unified Architecture Documentation
 
-> **CRITICAL**: This document serves as the canonical blueprint for rebuilding the entire HRV system. All architectural decisions, data models, and integration patterns are documented here.
+> **CRITICAL**: This document serves as the canonical blueprint for the complete HRV Brain system. All architectural decisions, data models, API endpoints, visualization architecture, and integration patterns are documented here.
+
+**Version**: 6.1.0 FINAL CONSOLIDATED + API VISUALIZATION ARCHITECTURE
+**Last Updated**: 2025-01-05
+**Status**: Production-Ready with Complete API-Generated Scientific Visualizations
 
 ## **DATABASE SCHEMA**
 
@@ -21,7 +25,250 @@ This file includes:
 
 ---
 
-## **OVERVIEW**
+## **API ARCHITECTURE**
+
+**Production API URL**: `https://hrv-brain-api-production.up.railway.app`
+**Framework**: Flask + PostgreSQL (Supabase)
+**Deployment**: Railway (recommended for modern workflow)
+**Authentication**: Supabase JWT + Row Level Security (RLS)
+
+### **API Endpoints Overview**
+
+#### **Health & System**
+```
+GET  /health                    - Basic health check
+GET  /health/detailed           - Detailed health check with DB connectivity
+```
+
+#### **Session Management**
+```
+POST   /api/v1/sessions/upload                    - Upload HRV session data
+GET    /api/v1/sessions/status/<session_id>       - Get session processing status
+GET    /api/v1/sessions/processed/<user_id>       - Get all processed sessions for user
+GET    /api/v1/sessions/statistics/<user_id>      - Get session statistics summary
+DELETE /api/v1/sessions/<session_id>             - Delete session (with auth)
+```
+
+#### **Scientific Visualization (NEW)**
+```
+GET    /api/v1/plots/hrv-trend                    - Generate scientific HRV trend plots
+```
+
+### **API Visualization Architecture**
+
+#### **Scientific Plot Generation**
+The API now generates professional, clinical-grade HRV trend analysis plots using Python matplotlib/seaborn:
+
+**Features:**
+- ±1 and ±2 standard deviation bands (SD bands)
+- Rolling averages (3-point for non-sleep, 5-point for sleep)
+- 10th and 90th percentile lines
+- Professional scientific styling with proper legends
+- Sleep vs non-sleep aggregation logic (event-based vs session-based)
+- All 9 HRV metrics supported in canonical schema order
+
+**Plot Endpoint**: `/api/v1/plots/hrv-trend`
+
+**Query Parameters:**
+- `user_id` (required): UUID format user ID
+- `metric` (required): One of `mean_hr`, `mean_rr`, `count_rr`, `rmssd`, `sdnn`, `pnn50`, `cv_rr`, `defa`, `sd2_sd1`
+- `tag` (required): One of `rest`, `sleep`, `experiment_paired_pre`, `experiment_paired_post`, `experiment_duration`, `breath_workout`
+
+**Response Format:**
+```json
+{
+  "success": true,
+  "plot_data": "<base64_encoded_png_image>",
+  "metadata": {
+    "metric": "rmssd",
+    "tag": "rest",
+    "data_points": 15,
+    "date_range": "2024-12-01 to 2025-01-05",
+    "statistics": {
+      "mean": 45.2,
+      "std": 8.7,
+      "min": 32.1,
+      "max": 58.9,
+      "p10": 35.4,
+      "p90": 55.8
+    }
+  }
+}
+```
+
+**Aggregation Logic:**
+- **Sleep Sessions**: Grouped by `event_id` (multiple intervals per sleep event)
+- **Non-Sleep Sessions**: Individual sessions (`event_id = 0`)
+- **Rolling Averages**: 3-point for non-sleep, 5-point for sleep
+- **Statistical Bands**: ±1σ and ±2σ calculated from filtered dataset
+
+#### **User ID Validation**
+The API implements flexible user ID validation compatible with Supabase authentication:
+
+```python
+def validate_user_id(user_id: str) -> bool:
+    """Validate Supabase user ID format - more flexible than strict UUID"""
+    # Supports UUID format + alphanumeric fallback
+    # Ensures compatibility with Supabase auth.users(id)
+```
+
+---
+
+## **iOS ARCHITECTURE**
+
+**Framework**: SwiftUI + Supabase Swift SDK
+**Authentication**: SupabaseAuthService (JWT-based)
+**Database Access**: Direct Supabase connection + API integration
+**Visualization**: API-generated scientific plots (embedded)
+
+### **iOS App Structure**
+
+#### **Core Components**
+```
+Core/
+├── SupabaseAuthService.swift     - Authentication & user management
+├── DatabaseSessionManager.swift  - Direct DB access for sessions
+└── CoreEngine.swift              - Central state management
+
+UI/
+├── MainContentView.swift         - Main app with 4 tabs
+├── Tabs/
+│   ├── RecordTabView.swift       - HRV recording interface
+│   ├── SessionsTabView.swift     - Session management & diagnostics
+│   ├── VisualizationsTabView.swift - Scientific plot visualization
+│   └── ProfileTabView.swift      - User profile & settings
+└── Components/
+    ├── APIPlotComponents.swift   - API plot fetching & display
+    └── SessionComponents.swift   - Session UI components
+```
+
+#### **Visualization Architecture (API-Based)**
+The iOS app now uses **API-generated scientific plots** instead of local SwiftUI Charts:
+
+**Key Components:**
+- `APIPlotService`: Fetches base64 PNG plots from API
+- `APIHRVMetricPlotCard`: Displays plots with loading/error states
+- `VisualizationsTabView`: Tag selection + plot grid for all 9 HRV metrics
+
+**Benefits of API-Generated Plots:**
+- Professional scientific styling with SD bands
+- No SwiftUI Charts compiler limitations
+- Consistent visualization across platforms
+- Advanced statistical overlays (percentiles, rolling averages)
+- Proper sleep vs non-sleep aggregation logic
+
+**Implementation:**
+```swift
+struct APIHRVMetricPlotCard: View {
+    let metric: HRVMetric
+    let tag: SessionTag
+    @State private var plotImage: UIImage?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    
+    var body: some View {
+        VStack {
+            if let image = plotImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else if isLoading {
+                ProgressView("Generating \(metric.displayName) plot...")
+            } else if let error = errorMessage {
+                Text("Error: \(error)")
+            }
+        }
+        .onAppear { loadPlot() }
+    }
+}
+```
+
+#### **Authentication Flow**
+```swift
+class SupabaseAuthService: ObservableObject {
+    @Published var isAuthenticated = false
+    @Published var userId: String?
+    
+    // JWT token management with expiration handling
+    // Automatic sign-out on token expiry
+    // Robust error handling for auth failures
+}
+```
+
+#### **Database Integration**
+The iOS app uses **dual data access patterns**:
+
+1. **Direct Supabase SDK** (Sessions tab, Record tab)
+   - Real-time session management
+   - Swipe-to-delete functionality
+   - Immediate data synchronization
+
+2. **API Integration** (Visualizations tab)
+   - Scientific plot generation
+   - Complex statistical analysis
+   - Professional visualization rendering
+
+---
+
+## **COMPLETE ARCHITECTURE SUMMARY**
+
+### **System Overview**
+The HRV Brain system implements a **unified, production-ready architecture** with complete scientific visualization capabilities:
+
+**Core Components:**
+- **Database**: PostgreSQL (Supabase) with unified sessions table and RLS
+- **API**: Flask backend with scientific plot generation (Railway deployment)
+- **iOS App**: SwiftUI with dual data access (direct DB + API integration)
+- **Visualization**: Professional matplotlib-generated scientific plots
+
+### **Data Flow Architecture**
+```
+iOS App (SwiftUI)
+    ↓ Record HRV Data
+    ↓ (Direct Supabase SDK)
+PostgreSQL Database (Supabase)
+    ↑ Session Management
+    ↑ (Direct Supabase SDK)
+iOS Sessions Tab
+
+    ↓ Scientific Analysis
+    ↓ (API Calls)
+Flask API (Railway)
+    ↓ Plot Generation
+    ↓ (matplotlib/seaborn)
+Scientific Visualizations
+    ↑ Base64 PNG Images
+    ↑ (API Response)
+iOS Visualizations Tab
+```
+
+### **Key Architectural Decisions**
+
+1. **Unified Sessions Table**: Single source of truth for all HRV data
+2. **Dual Data Access**: Direct DB for real-time operations, API for complex analysis
+3. **API-Generated Plots**: Professional scientific visualizations with SD bands
+4. **Event Grouping Logic**: Sleep sessions grouped by event_id, others standalone
+5. **Canonical Tag System**: 6 base tags with semantic subtags
+6. **JWT Authentication**: Supabase auth with automatic token management
+
+### **Scientific Visualization Features**
+- ✅ ±1 and ±2 standard deviation bands
+- ✅ Rolling averages (3-point non-sleep, 5-point sleep)
+- ✅ 10th and 90th percentile lines
+- ✅ Professional clinical styling and legends
+- ✅ Sleep vs non-sleep aggregation logic
+- ✅ All 9 HRV metrics in canonical schema order
+- ✅ Base64 PNG delivery for iOS embedding
+
+### **Production Deployment**
+- **Database**: Supabase PostgreSQL with RLS policies
+- **API**: Railway deployment with automatic CI/CD
+- **iOS**: Direct Supabase SDK + API integration
+- **Authentication**: JWT-based with expiration handling
+
+---
+
+## **DETAILED SPECIFICATIONS**
 
 The unified schema implements a clean, extensible architecture with:
 - **Base Tags**: 6 allowed session types
