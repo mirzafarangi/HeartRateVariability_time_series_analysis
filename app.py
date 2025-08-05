@@ -155,8 +155,29 @@ def validate_session_data(data: Dict) -> Dict[str, str]:
     
     return errors
 
+def validate_user_id(user_id: str) -> bool:
+    """Validate Supabase user ID format - more flexible than strict UUID"""
+    if not user_id or len(user_id.strip()) == 0:
+        return False
+    
+    # Allow Supabase user IDs (UUIDs) and other valid formats
+    user_id = user_id.strip()
+    
+    # Check if it's a valid UUID format (most common for Supabase)
+    try:
+        UUID(user_id)
+        return True
+    except ValueError:
+        pass
+    
+    # Allow alphanumeric user IDs (backup for other auth systems)
+    if len(user_id) >= 8 and user_id.replace('-', '').replace('_', '').isalnum():
+        return True
+        
+    return False
+
 def validate_uuid(uuid_string: str) -> bool:
-    """Validate UUID format"""
+    """Validate strict UUID format for session IDs"""
     try:
         UUID(uuid_string)
         return True
@@ -401,7 +422,7 @@ def get_session_status(session_id: str):
 def get_processed_sessions(user_id: str):
     """Get all processed sessions for a user"""
     try:
-        if not validate_uuid(user_id):
+        if not validate_user_id(user_id):
             return jsonify({'error': 'Invalid user_id format'}), 400
         
         # Get pagination parameters
@@ -485,7 +506,7 @@ def get_processed_sessions(user_id: str):
 def get_session_statistics(user_id: str):
     """Get session statistics for a user (using helper function from schema)"""
     try:
-        if not validate_uuid(user_id):
+        if not validate_user_id(user_id):
             return jsonify({'error': 'Invalid user_id format'}), 400
         
         conn = get_db_connection()
@@ -614,6 +635,8 @@ def generate_hrv_trend_plot():
         # Validate required parameters
         if not user_id:
             return jsonify({'error': 'user_id parameter is required'}), 400
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
         if not metric:
             return jsonify({'error': 'metric parameter is required'}), 400
         if not tag:
