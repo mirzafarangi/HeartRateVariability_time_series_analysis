@@ -1,0 +1,16 @@
+DEPLOYMENT TRIGGER - Plot Generator Fix
+Timestamp: 2025-08-06T01:05:00Z
+Version: 3.3.5 Plot Fix Deploy
+
+CRITICAL FIX DEPLOYED:
+- Fixed plot_generator.py data structure bug
+- Changed from nested hrv_metrics access to top-level field access
+- This should resolve 0-byte plot generation issue
+
+EXPECTED RESULT AFTER DEPLOYMENT:
+- Plot generation should return >1000 bytes instead of 0 bytes
+- Automatic plot generation during session upload should work
+- iOS Analysis tab should display scientific HRV plots
+
+VALIDATION COMMAND:
+curl -s "https://hrv-brain-api-production.up.railway.app/api/v1/debug/plot-test/7015839c-4659-4b6c-821c-2906e710a2db/rest/rmssd"

@@ -1,10 +1,11 @@
 """
 HRV Brain API - Supabase Edition
-Version: 3.3.4 Final
+Version: 3.3.5 Plot Fix Deploy
 Source: schema.md (Golden Reference)
 
 Clean, production-ready API with Supabase PostgreSQL integration.
 Implements exact unified schema and all 9 HRV metrics from schema.md.
+FIXED: Plot generator data structure bug - accessing top-level HRV metrics.
 """
 
 import os
