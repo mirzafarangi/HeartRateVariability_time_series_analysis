@@ -895,9 +895,30 @@ def get_user_plots(user_id: str):
 @app.route('/api/v1/debug/plots/refresh/<user_id>/<tag>', methods=['POST'])
 def debug_refresh_plots_for_tag(user_id: str, tag: str):
     """Debug version of plot refresh with detailed error reporting"""
+    global hrv_plots_manager
+    
     try:
         if not validate_user_id(user_id):
             return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Ensure HRV plots manager is initialized
+        if hrv_plots_manager is None:
+            logger.info("DEBUG: HRV plots manager not initialized, initializing now...")
+            try:
+                initialize_connection_pool()
+                if hrv_plots_manager is None:
+                    return jsonify({
+                        'debug_success': False,
+                        'error': 'Failed to initialize HRV plots manager',
+                        'debug_info': {'initialization_failed': True}
+                    }), 500
+                logger.info("DEBUG: HRV plots manager initialized successfully")
+            except Exception as init_error:
+                return jsonify({
+                    'debug_success': False,
+                    'error': f'Initialization failed: {str(init_error)}',
+                    'debug_info': {'initialization_error': str(init_error)}
+                }), 500
         
         logger.info(f"DEBUG: Starting plot refresh for user {user_id}, tag {tag}")
         
