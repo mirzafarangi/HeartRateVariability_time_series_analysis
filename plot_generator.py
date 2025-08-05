@@ -128,10 +128,10 @@ class HRVPlotGenerator:
             
     def _prepare_session_data(self, sessions: List[Dict], metric: str, tag: str) -> pd.DataFrame:
         """Prepare session data for plotting"""
-        # CRITICAL FIX: HRV metrics are nested in 'hrv_metrics' object, not top-level
+        # CRITICAL FIX: HRV metrics are TOP-LEVEL fields in database, not nested
         filtered_sessions = [s for s in sessions 
                            if s.get('tag') == tag and 
-                           s.get('hrv_metrics', {}).get(metric) is not None]
+                           s.get(metric) is not None]
         
         if not filtered_sessions:
             logger.warning(f"No sessions found for tag={tag} with metric={metric}")
@@ -141,7 +141,7 @@ class HRVPlotGenerator:
             
         df = pd.DataFrame([{
             'date': datetime.fromisoformat(s['recorded_at'].replace('Z', '+00:00')),
-            'value': float(s['hrv_metrics'][metric])  # CRITICAL FIX: Access nested hrv_metrics
+            'value': float(s[metric])  # CRITICAL FIX: Access top-level metric fields
         } for s in filtered_sessions])
         
         return df.sort_values('date')
