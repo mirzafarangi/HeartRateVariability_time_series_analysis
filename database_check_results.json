@@ -1,0 +1,10 @@
+{
+  "connection": {
+    "success": false,
+    "error": "could not translate host name \"db.zluwfmovtmlijawhelzi.supabase.co\" to address: nodename nor servname provided, or not known\n"
+  },
+  "tables": {},
+  "functions": {},
+  "permissions": {},
+  "test_operations": {}
+}

@@ -19,11 +19,18 @@ class DatabaseConfig:
     
     def __init__(self):
         # Supabase connection details (from .env.railway)
-        self.host = os.environ.get('SUPABASE_DB_HOST', 'db.zluwfmovtmlijawhelzi.supabase.co')
+        # CRITICAL: Always use environment variables, never hardcode old project hostnames
+        self.host = os.environ.get('SUPABASE_DB_HOST')
         self.database = os.environ.get('SUPABASE_DB_NAME', 'postgres')
         self.user = os.environ.get('SUPABASE_DB_USER', 'postgres')
-        self.password = os.environ.get('SUPABASE_DB_PASSWORD', 'Slavoj@!64Su')
+        self.password = os.environ.get('SUPABASE_DB_PASSWORD')
         self.port = int(os.environ.get('SUPABASE_DB_PORT', '5432'))
+        
+        # Validate required environment variables
+        if not self.host:
+            raise ValueError("SUPABASE_DB_HOST environment variable is required")
+        if not self.password:
+            raise ValueError("SUPABASE_DB_PASSWORD environment variable is required")
         
         # Resolve to IPv4 address for Railway compatibility
         self.ipv4_host = self._resolve_to_ipv4(self.host)
