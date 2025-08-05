@@ -59,16 +59,38 @@ class HRVPlotsManager:
             stat_p10 = stats.get('p10')
             stat_p90 = stats.get('p90')
             
-            # Call the upsert function
+            # Use direct SQL instead of function to identify exact issue
             cur.execute("""
-                SELECT upsert_hrv_plot(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO public.hrv_plots (
+                    user_id, tag, metric, plot_image_base64, plot_metadata,
+                    data_points_count, date_range_start, date_range_end,
+                    stat_mean, stat_std, stat_min, stat_max, stat_p10, stat_p90
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (user_id, tag, metric)
+                DO UPDATE SET
+                    plot_image_base64 = EXCLUDED.plot_image_base64,
+                    plot_metadata = EXCLUDED.plot_metadata,
+                    data_points_count = EXCLUDED.data_points_count,
+                    date_range_start = EXCLUDED.date_range_start,
+                    date_range_end = EXCLUDED.date_range_end,
+                    stat_mean = EXCLUDED.stat_mean,
+                    stat_std = EXCLUDED.stat_std,
+                    stat_min = EXCLUDED.stat_min,
+                    stat_max = EXCLUDED.stat_max,
+                    stat_p10 = EXCLUDED.stat_p10,
+                    stat_p90 = EXCLUDED.stat_p90,
+                    updated_at = NOW()
+                RETURNING plot_id
             """, (
                 user_id, tag, metric, plot_image_base64, json.dumps(plot_metadata),
                 data_points_count, date_range_start, date_range_end,
                 stat_mean, stat_std, stat_min, stat_max, stat_p10, stat_p90
             ))
             
-            plot_id = cur.fetchone()[0]
+            result = cur.fetchone()
+            plot_id = result[0] if result else None
             conn.commit()
             
             logger.info(f"Successfully upserted plot for user {user_id}, tag {tag}, metric {metric}")
