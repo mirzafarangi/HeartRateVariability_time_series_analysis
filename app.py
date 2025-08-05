@@ -859,9 +859,18 @@ def get_user_plots(user_id: str):
     Returns:
         JSON with all user plots organized by tag and metric
     """
+    global hrv_plots_manager
+    
     try:
         if not validate_user_id(user_id):
             return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Ensure HRV plots manager is initialized
+        if hrv_plots_manager is None:
+            logger.info("HRV plots manager not initialized, initializing now...")
+            initialize_connection_pool()
+            if hrv_plots_manager is None:
+                return jsonify({'error': 'Failed to initialize plot manager'}), 500
         
         plots = hrv_plots_manager.get_user_plots(user_id)
         
@@ -1054,9 +1063,18 @@ def debug_refresh_plots_for_tag(user_id: str, tag: str):
 @app.route('/api/v1/plots/refresh-sequential/<user_id>/<tag>', methods=['POST'])
 def refresh_plots_sequential(user_id: str, tag: str):
     """Sequential plot refresh using working individual generation logic"""
+    global hrv_plots_manager
+    
     try:
         if not validate_user_id(user_id):
             return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Ensure HRV plots manager is initialized
+        if hrv_plots_manager is None:
+            logger.info("HRV plots manager not initialized, initializing now...")
+            initialize_connection_pool()
+            if hrv_plots_manager is None:
+                return jsonify({'error': 'Failed to initialize plot manager'}), 500
         
         # HRV metrics to generate plots for
         metrics = ['mean_hr', 'mean_rr', 'count_rr', 'rmssd', 'sdnn', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1']
