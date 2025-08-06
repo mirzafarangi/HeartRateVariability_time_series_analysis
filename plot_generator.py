@@ -112,7 +112,7 @@ class HRVPlotGenerator:
                       s=80, alpha=0.8, zorder=4, label='Data Points')
             
             # Formatting
-            self._format_plot(ax, config, tag, title_suffix)
+            self._format_plot(ax, config, tag, title_suffix, len(df))
             
             # Add statistics text box
             stats_text = self._generate_stats_text(values, config['unit'])
@@ -162,7 +162,7 @@ class HRVPlotGenerator:
         
         return df.sort_values('date')
         
-    def _format_plot(self, ax, config: Dict, tag: str, title_suffix: str):
+    def _format_plot(self, ax, config: Dict, tag: str, title_suffix: str, df_length: int = 1):
         """Apply scientific formatting to the plot"""
         # Title
         title = f"{config['display_name']} Trend Analysis - {tag.title()}"
@@ -176,7 +176,9 @@ class HRVPlotGenerator:
         
         # Date formatting
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(ax.get_xticklabels()) // 6)))
+        # Fix: Use DataFrame length to avoid type conversion error
+        interval = max(1, df_length // 6) if df_length > 6 else 1
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
         
         # Grid and styling
