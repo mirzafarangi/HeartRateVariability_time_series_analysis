@@ -23,6 +23,7 @@ from psycopg2.pool import ThreadedConnectionPool
 
 from database_config import DatabaseConfig
 from hrv_metrics import calculate_hrv_metrics
+from session_validator import validate_session_enhanced, ValidationResult
 
 # Configure logging
 logging.basicConfig(
@@ -75,7 +76,8 @@ def return_db_connection(conn):
 
 def validate_session_data(data: Dict) -> Dict:
     """
-    Validate session data against schema.md requirements
+    Legacy validation function for backward compatibility
+    Uses the new modular validation system internally
     
     Args:
         data: Session data dictionary
@@ -83,45 +85,12 @@ def validate_session_data(data: Dict) -> Dict:
     Returns:
         Dictionary of validation errors (empty if valid)
     """
+    result = validate_session_enhanced(data)
+    
+    # Convert to legacy format
     errors = {}
-    
-    # Required fields
-    required_fields = ['user_id', 'tag', 'rr_intervals', 'session_id']
-    for field in required_fields:
-        if field not in data or data[field] is None:
-            errors[field] = f"Field '{field}' is required"
-    
-    # Validate user_id format (Supabase auth.users format)
-    if 'user_id' in data and data['user_id']:
-        if not validate_user_id(data['user_id']):
-            errors['user_id'] = "Invalid user_id format"
-    
-    # Validate session_id format (UUID)
-    if 'session_id' in data and data['session_id']:
-        if not validate_uuid(data['session_id']):
-            errors['session_id'] = "Invalid session_id format (must be UUID)"
-    
-    # Validate tag
-    valid_tags = ['sleep', 'rest', 'experiment_paired_pre', 'experiment_paired_post', 'experiment_duration', 'breath_workout']
-    if 'tag' in data and data['tag'] not in valid_tags:
-        errors['tag'] = f"Tag must be one of: {', '.join(valid_tags)}"
-    
-    # Validate RR intervals
-    if 'rr_intervals' in data:
-        rr_intervals = data['rr_intervals']
-        if not isinstance(rr_intervals, list) or len(rr_intervals) < 10:
-            errors['rr_intervals'] = "RR intervals must be a list with at least 10 values"
-        elif not all(isinstance(x, (int, float)) and x > 0 for x in rr_intervals):
-            errors['rr_intervals'] = "All RR intervals must be positive numbers"
-    
-    # Validate optional fields
-    if 'subtag' in data and data['subtag'] is not None:
-        if not isinstance(data['subtag'], str) or len(data['subtag']) > 50:
-            errors['subtag'] = "Subtag must be a string with max 50 characters"
-    
-    if 'event_id' in data and data['event_id'] is not None:
-        if not isinstance(data['event_id'], int) or data['event_id'] <= 0:
-            errors['event_id'] = "Event ID must be a positive integer"
+    for error in result.errors:
+        errors[error.field] = error.message
     
     return errors
 
@@ -196,18 +165,29 @@ def upload_session():
         if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
         
-        # Validate input data
-        validation_errors = validate_session_data(data)
-        if validation_errors:
-            return jsonify({'error': 'Validation failed', 'details': validation_errors}), 400
+        # Enhanced validation with detailed error reporting
+        validation_result = validate_session_enhanced(data)
         
-        # Extract data
-        user_id = data['user_id']
-        session_id = data['session_id']
-        tag = data['tag']
-        subtag = data.get('subtag')
-        event_id = data.get('event_id')
-        rr_intervals = data['rr_intervals']
+        if not validation_result.is_valid():
+            logger.warning(f"Session validation failed: {validation_result.to_dict()}")
+            return jsonify({
+                'error': 'Validation failed',
+                'details': validation_result.to_dict(),
+                'message': 'Please check the data format and try again'
+            }), 400
+        
+        # Log warnings if any
+        if validation_result.warnings:
+            logger.info(f"Session validation warnings: {[w.message for w in validation_result.warnings]}")
+        
+        # Extract cleaned/validated data
+        cleaned_data = validation_result.cleaned_data
+        user_id = cleaned_data['user_id']
+        session_id = cleaned_data['session_id']
+        tag = cleaned_data['tag']
+        subtag = cleaned_data.get('subtag')
+        event_id = cleaned_data.get('event_id')
+        rr_intervals = cleaned_data['rr_intervals']
         recorded_at = data.get('recorded_at', datetime.now(timezone.utc).isoformat())
         
         # Calculate HRV metrics
