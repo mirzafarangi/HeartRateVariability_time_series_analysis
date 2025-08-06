@@ -128,10 +128,10 @@ class HRVPlotGenerator:
             
     def _prepare_session_data(self, sessions: List[Dict], metric: str, tag: str) -> pd.DataFrame:
         """Prepare session data for plotting"""
-        # CRITICAL FIX: HRV metrics are TOP-LEVEL fields in database, not nested
+        # CRITICAL FIX: HRV metrics are NESTED under 'hrv_metrics' in API response
         filtered_sessions = [s for s in sessions 
                            if s.get('tag') == tag and 
-                           s.get(metric) is not None]
+                           s.get('hrv_metrics', {}).get(metric) is not None]
         
         if not filtered_sessions:
             logger.warning(f"No sessions found for tag={tag} with metric={metric}")
@@ -139,12 +139,16 @@ class HRVPlotGenerator:
             
         logger.info(f"Found {len(filtered_sessions)} sessions for tag={tag}, metric={metric}")
             
-        df = pd.DataFrame([{
-            'date': datetime.fromisoformat(s['recorded_at'].replace('Z', '+00:00')),
-            'value': float(s[metric])  # CRITICAL FIX: Access top-level metric fields
-        } for s in filtered_sessions])
-        
-        return df.sort_values('date')
+        try:
+            df = pd.DataFrame([{
+                'date': datetime.fromisoformat(s['recorded_at'].replace('Z', '+00:00')),
+                'value': float(s['hrv_metrics'][metric])  # CRITICAL FIX: Access nested metric fields
+            } for s in filtered_sessions])
+            
+            return df.sort_values('date')
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error(f"Error processing session data for {metric}: {str(e)}")
+            return pd.DataFrame()
         
     def _prepare_sleep_data(self, sleep_events: List[Dict], metric: str) -> pd.DataFrame:
         """Prepare sleep event data for plotting"""
