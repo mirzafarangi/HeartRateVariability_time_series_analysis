@@ -155,7 +155,41 @@ class OnDemandPlotService:
             return {
                 'success': False,
                 'error': 'No rest sessions found',
-                'plots': {}
+                'plots': {},
+                'sessions_count': 0
+            }
+        
+        logger.info(f"Found {len(sessions)} rest sessions for user {user_id}")
+        
+        # Convert sessions to format expected by plot generator (COMPLETE DATA STRUCTURE)
+        sessions_data = []
+        for session in sessions:
+            # Create complete session data structure with ALL required fields
+            session_dict = {
+                'session_id': session.get('session_id'),
+                'tag': 'rest',  # ✅ CRITICAL: Add missing 'tag' field
+                'subtag': session.get('subtag'),
+                'recorded_at': session['recorded_at'].isoformat() if hasattr(session['recorded_at'], 'isoformat') else str(session['recorded_at']),
+                'hrv_metrics': {  # ✅ CRITICAL: Include ALL HRV metrics, not just one
+                    'mean_hr': float(session['mean_hr']) if session.get('mean_hr') is not None else None,
+                    'mean_rr': float(session['mean_rr']) if session.get('mean_rr') is not None else None,
+                    'count_rr': int(session['count_rr']) if session.get('count_rr') is not None else None,
+                    'rmssd': float(session['rmssd']) if session.get('rmssd') is not None else None,
+                    'sdnn': float(session['sdnn']) if session.get('sdnn') is not None else None,
+                    'pnn50': float(session['pnn50']) if session.get('pnn50') is not None else None,
+                    'cv_rr': float(session['cv_rr']) if session.get('cv_rr') is not None else None,
+                    'defa': float(session['defa']) if session.get('defa') is not None else None,
+                    'sd2_sd1': float(session['sd2_sd1']) if session.get('sd2_sd1') is not None else None
+                }
+            }
+            sessions_data.append(session_dict)
+        
+        if not sessions_data:
+            return {
+                'success': False,
+                'error': 'No valid rest sessions found',
+                'plots': {},
+                'sessions_count': 0
             }
         
         plots = {}
@@ -163,23 +197,9 @@ class OnDemandPlotService:
         
         for metric in metrics:
             try:
-                # Convert sessions to format expected by plot generator
-                sessions_data = []
-                for session in sessions:
-                    if session.get(metric) is not None:
-                        sessions_data.append({
-                            'recorded_at': session['recorded_at'].isoformat(),
-                            'hrv_metrics': {metric: float(session[metric])}
-                        })
+                logger.info(f"Generating {metric} plot for {len(sessions_data)} rest sessions")
                 
-                if not sessions_data:
-                    plots[metric] = {
-                        'success': False,
-                        'error': f'No {metric} data found'
-                    }
-                    continue
-                
-                # Generate plot
+                # Generate plot using COMPLETE session data structure
                 plot_base64, stats = self.plot_generator.generate_trend_plot(
                     sessions_data, [], metric, 'rest', 'Baseline'
                 )
@@ -219,7 +239,41 @@ class OnDemandPlotService:
             return {
                 'success': False,
                 'error': f'No sleep sessions found for event {event_id}',
-                'plots': {}
+                'plots': {},
+                'sessions_count': 0
+            }
+        
+        logger.info(f"Found {len(sessions)} sleep sessions for user {user_id}, event {event_id}")
+        
+        # Convert sessions to format expected by plot generator (COMPLETE DATA STRUCTURE)
+        sessions_data = []
+        for session in sessions:
+            # Create complete session data structure with ALL required fields
+            session_dict = {
+                'session_id': session.get('session_id'),
+                'tag': 'sleep',  # ✅ CRITICAL: Add missing 'tag' field
+                'subtag': session.get('subtag'),
+                'recorded_at': session['recorded_at'].isoformat() if hasattr(session['recorded_at'], 'isoformat') else str(session['recorded_at']),
+                'hrv_metrics': {  # ✅ CRITICAL: Include ALL HRV metrics, not just one
+                    'mean_hr': float(session['mean_hr']) if session.get('mean_hr') is not None else None,
+                    'mean_rr': float(session['mean_rr']) if session.get('mean_rr') is not None else None,
+                    'count_rr': int(session['count_rr']) if session.get('count_rr') is not None else None,
+                    'rmssd': float(session['rmssd']) if session.get('rmssd') is not None else None,
+                    'sdnn': float(session['sdnn']) if session.get('sdnn') is not None else None,
+                    'pnn50': float(session['pnn50']) if session.get('pnn50') is not None else None,
+                    'cv_rr': float(session['cv_rr']) if session.get('cv_rr') is not None else None,
+                    'defa': float(session['defa']) if session.get('defa') is not None else None,
+                    'sd2_sd1': float(session['sd2_sd1']) if session.get('sd2_sd1') is not None else None
+                }
+            }
+            sessions_data.append(session_dict)
+        
+        if not sessions_data:
+            return {
+                'success': False,
+                'error': f'No valid sleep sessions found for event {event_id}',
+                'plots': {},
+                'sessions_count': 0
             }
         
         plots = {}
@@ -227,23 +281,9 @@ class OnDemandPlotService:
         
         for metric in metrics:
             try:
-                # Convert sessions to format expected by plot generator
-                sessions_data = []
-                for session in sessions:
-                    if session.get(metric) is not None:
-                        sessions_data.append({
-                            'recorded_at': session['recorded_at'].isoformat(),
-                            'hrv_metrics': {metric: float(session[metric])}
-                        })
+                logger.info(f"Generating {metric} plot for {len(sessions_data)} sleep sessions (event {event_id})")
                 
-                if not sessions_data:
-                    plots[metric] = {
-                        'success': False,
-                        'error': f'No {metric} data found for event {event_id}'
-                    }
-                    continue
-                
-                # Generate plot
+                # Generate plot using COMPLETE session data structure
                 plot_base64, stats = self.plot_generator.generate_trend_plot(
                     sessions_data, [], metric, 'sleep', f'Event {event_id}'
                 )
@@ -293,16 +333,33 @@ class OnDemandPlotService:
         
         for metric in metrics:
             try:
-                # Convert baseline data to format expected by plot generator
+                logger.info(f"Generating {metric} baseline plot for {len(baseline_data)} sleep events")
+                
+                # Convert baseline data to format expected by plot generator (COMPLETE DATA STRUCTURE)
                 baseline_sessions = []
                 avg_metric_key = f'avg_{metric}'
                 
                 for event_data in baseline_data:
                     if event_data.get(avg_metric_key) is not None:
-                        baseline_sessions.append({
-                            'recorded_at': event_data['event_date'].isoformat(),
-                            'hrv_metrics': {metric: float(event_data[avg_metric_key])}
-                        })
+                        # Create complete session data structure with ALL required fields
+                        session_dict = {
+                            'session_id': f"baseline_event_{event_data.get('event_id', 'unknown')}",
+                            'tag': 'sleep',  # ✅ CRITICAL: Add missing 'tag' field
+                            'subtag': 'baseline',
+                            'recorded_at': event_data['event_date'].isoformat() if hasattr(event_data['event_date'], 'isoformat') else str(event_data['event_date']),
+                            'hrv_metrics': {  # ✅ CRITICAL: Include ALL HRV metrics from baseline data
+                                'mean_hr': float(event_data.get('avg_mean_hr')) if event_data.get('avg_mean_hr') is not None else None,
+                                'mean_rr': float(event_data.get('avg_mean_rr')) if event_data.get('avg_mean_rr') is not None else None,
+                                'count_rr': float(event_data.get('avg_count_rr')) if event_data.get('avg_count_rr') is not None else None,
+                                'rmssd': float(event_data.get('avg_rmssd')) if event_data.get('avg_rmssd') is not None else None,
+                                'sdnn': float(event_data.get('avg_sdnn')) if event_data.get('avg_sdnn') is not None else None,
+                                'pnn50': float(event_data.get('avg_pnn50')) if event_data.get('avg_pnn50') is not None else None,
+                                'cv_rr': float(event_data.get('avg_cv_rr')) if event_data.get('avg_cv_rr') is not None else None,
+                                'defa': float(event_data.get('avg_defa')) if event_data.get('avg_defa') is not None else None,
+                                'sd2_sd1': float(event_data.get('avg_sd2_sd1')) if event_data.get('avg_sd2_sd1') is not None else None
+                            }
+                        }
+                        baseline_sessions.append(session_dict)
                 
                 if not baseline_sessions:
                     plots[metric] = {
@@ -311,7 +368,7 @@ class OnDemandPlotService:
                     }
                     continue
                 
-                # Generate plot
+                # Generate plot using COMPLETE session data structure
                 plot_base64, stats = self.plot_generator.generate_trend_plot(
                     baseline_sessions, [], metric, 'sleep', 'Baseline'
                 )
