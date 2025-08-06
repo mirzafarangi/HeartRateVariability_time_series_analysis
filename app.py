@@ -1505,24 +1505,68 @@ def get_plot_statistics(user_id: str):
 # NEW ON-DEMAND PLOT ENDPOINTS (v4.0.0)
 # =====================================================
 
-# Import the new on-demand plot service
-from new_plot_endpoints import OnDemandPlotService
-
 # Initialize the service (will be done after connection pool is ready)
 on_demand_plot_service = None
 
 def ensure_on_demand_service():
-    """Ensure on-demand plot service is initialized"""
+    """Ensure on-demand plot service is initialized with robust fallback"""
     global on_demand_plot_service
-    try:
-        if on_demand_plot_service is None and connection_pool is not None:
-            from new_plot_endpoints import OnDemandPlotService
-            on_demand_plot_service = OnDemandPlotService(connection_pool)
-            logger.info("OnDemandPlotService initialized successfully")
+    
+    # Return existing service if already initialized
+    if on_demand_plot_service is not None:
         return on_demand_plot_service
+    
+    # Check if connection pool is available
+    if connection_pool is None:
+        logger.error("Cannot initialize OnDemandPlotService: connection_pool is None")
+        return None
+    
+    try:
+        # Import and initialize with detailed logging
+        logger.info("Attempting to import OnDemandPlotService...")
+        from new_plot_endpoints import OnDemandPlotService
+        logger.info("OnDemandPlotService imported successfully")
+        
+        logger.info("Initializing OnDemandPlotService with connection pool...")
+        on_demand_plot_service = OnDemandPlotService(connection_pool)
+        logger.info("OnDemandPlotService initialized successfully")
+        
+        return on_demand_plot_service
+        
+    except ImportError as e:
+        logger.error(f"Failed to import OnDemandPlotService: {e}")
+        return None
     except Exception as e:
         logger.error(f"Failed to initialize OnDemandPlotService: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
+
+@app.route('/debug/service-status', methods=['GET'])
+def debug_service_status():
+    """Debug endpoint to check OnDemandPlotService status"""
+    global on_demand_plot_service, connection_pool
+    
+    status = {
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'connection_pool_status': 'available' if connection_pool is not None else 'null',
+        'service_status': 'initialized' if on_demand_plot_service is not None else 'null',
+        'initialization_attempt': None
+    }
+    
+    # Try to initialize if not already done
+    if on_demand_plot_service is None:
+        try:
+            logger.info("Debug: Attempting service initialization...")
+            service = ensure_on_demand_service()
+            status['initialization_attempt'] = 'success' if service is not None else 'failed'
+            status['service_status'] = 'initialized' if service is not None else 'failed'
+        except Exception as e:
+            status['initialization_attempt'] = f'error: {str(e)}'
+            logger.error(f"Debug service initialization failed: {e}")
+    
+    return jsonify(status)
 
 @app.route('/api/v1/sleep/events/<user_id>', methods=['GET'])
 def get_sleep_event_ids(user_id: str):
