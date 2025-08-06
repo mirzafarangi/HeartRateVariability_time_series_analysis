@@ -223,7 +223,7 @@ def upload_session():
                     hrv_metrics['mean_hr'], hrv_metrics['mean_rr'], hrv_metrics['count_rr'],
                     hrv_metrics['rmssd'], hrv_metrics['sdnn'], hrv_metrics['pnn50'],
                     hrv_metrics['cv_rr'], hrv_metrics['defa'], hrv_metrics['sd2_sd1'],
-                    json.dumps(rr_intervals)
+                    rr_intervals
                 ))
                 conn.commit()
         finally:
