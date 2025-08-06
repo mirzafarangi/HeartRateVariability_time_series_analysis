@@ -48,7 +48,7 @@ hrv_plots_manager = None
 
 def initialize_connection_pool():
     """Initialize PostgreSQL connection pool and HRV plots manager"""
-    global connection_pool, hrv_plots_manager
+    global connection_pool, hrv_plots_manager, on_demand_plot_service
     try:
         connection_pool = ThreadedConnectionPool(
             minconn=1,
@@ -64,7 +64,11 @@ def initialize_connection_pool():
         # Initialize HRV plots manager
         hrv_plots_manager = HRVPlotsManager(connection_pool)
         
-        logger.info("Database connection pool and HRV plots manager initialized successfully")
+        # Initialize OnDemandPlotService
+        from new_plot_endpoints import OnDemandPlotService
+        on_demand_plot_service = OnDemandPlotService(connection_pool)
+        
+        logger.info("Database connection pool, HRV plots manager, and OnDemandPlotService initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize connection pool: {e}")
         raise
@@ -1510,9 +1514,15 @@ on_demand_plot_service = None
 def ensure_on_demand_service():
     """Ensure on-demand plot service is initialized"""
     global on_demand_plot_service
-    if on_demand_plot_service is None and connection_pool is not None:
-        on_demand_plot_service = OnDemandPlotService(connection_pool)
-    return on_demand_plot_service
+    try:
+        if on_demand_plot_service is None and connection_pool is not None:
+            from new_plot_endpoints import OnDemandPlotService
+            on_demand_plot_service = OnDemandPlotService(connection_pool)
+            logger.info("OnDemandPlotService initialized successfully")
+        return on_demand_plot_service
+    except Exception as e:
+        logger.error(f"Failed to initialize OnDemandPlotService: {e}")
+        return None
 
 @app.route('/api/v1/sleep/events/<user_id>', methods=['GET'])
 def get_sleep_event_ids(user_id: str):
