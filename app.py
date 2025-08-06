@@ -210,7 +210,30 @@ def get_sessions_data_for_plot(user_id: str, tag: str):
                 """,
                 (user_id, tag)
             )
-            sessions_data = [dict(row) for row in cursor.fetchall()]
+            raw_sessions = cursor.fetchall()
+            
+            # Convert to same format as processed sessions endpoint (nested hrv_metrics)
+            sessions_data = []
+            for row in raw_sessions:
+                session_dict = {
+                    'session_id': row['session_id'],
+                    'tag': row['tag'],
+                    'subtag': row['subtag'],
+                    'recorded_at': row['recorded_at'].isoformat() if hasattr(row['recorded_at'], 'isoformat') else str(row['recorded_at']),
+                    'duration_minutes': row['duration_minutes'],
+                    'hrv_metrics': {
+                        'mean_hr': float(row['mean_hr']) if row['mean_hr'] is not None else None,
+                        'mean_rr': float(row['mean_rr']) if row['mean_rr'] is not None else None,
+                        'count_rr': int(row['count_rr']) if row['count_rr'] is not None else None,
+                        'rmssd': float(row['rmssd']) if row['rmssd'] is not None else None,
+                        'sdnn': float(row['sdnn']) if row['sdnn'] is not None else None,
+                        'pnn50': float(row['pnn50']) if row['pnn50'] is not None else None,
+                        'cv_rr': float(row['cv_rr']) if row['cv_rr'] is not None else None,
+                        'defa': float(row['defa']) if row['defa'] is not None else None,
+                        'sd2_sd1': float(row['sd2_sd1']) if row['sd2_sd1'] is not None else None
+                    }
+                }
+                sessions_data.append(session_dict)
             
             # Get sleep events data if tag is 'sleep'
             sleep_events_data = []
