@@ -1603,7 +1603,7 @@ def get_sleep_event_ids(user_id: str):
 @app.route('/api/v1/plots/rest-baseline/<user_id>', methods=['POST'])
 def generate_rest_baseline_plots(user_id: str):
     """
-    Generate Rest Baseline Trends (RMSSD + SDNN)
+    Generate Rest Baseline Trends (RMSSD + SDNN) - DIRECT IMPLEMENTATION
     
     Returns:
         JSON with plot data and statistics
@@ -1612,16 +1612,100 @@ def generate_rest_baseline_plots(user_id: str):
         if not validate_user_id(user_id):
             return jsonify({'error': 'Invalid user_id format'}), 400
         
-        service = ensure_on_demand_service()
-        if not service:
-            return jsonify({'error': 'Service not available'}), 503
+        logger.info(f"Generating rest baseline plots for user {user_id} (DIRECT)")
         
-        result = service.generate_rest_baseline_plots(user_id)
+        # Get rest sessions directly from database
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT session_id, user_id, tag, subtag, event_id,
+                           recorded_at, mean_hr, mean_rr, count_rr, 
+                           rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+                    FROM sessions 
+                    WHERE user_id = %s 
+                    AND tag = 'rest'
+                    AND status = 'completed'
+                    ORDER BY recorded_at ASC
+                """, (user_id,))
+                
+                sessions = cursor.fetchall()
+                
+        finally:
+            return_db_connection(conn)
         
-        if result['success']:
-            return jsonify(result)
-        else:
-            return jsonify(result), 404
+        if not sessions:
+            return jsonify({
+                'success': False,
+                'error': 'No rest sessions found',
+                'plots': {},
+                'sessions_count': 0
+            }), 404
+        
+        logger.info(f"Found {len(sessions)} rest sessions for user {user_id}")
+        
+        # Convert sessions to format expected by plot generator
+        sessions_data = []
+        for session in sessions:
+            session_dict = {
+                'session_id': session.get('session_id'),
+                'tag': 'rest',
+                'subtag': session.get('subtag'),
+                'recorded_at': session['recorded_at'].isoformat() if hasattr(session['recorded_at'], 'isoformat') else str(session['recorded_at']),
+                'hrv_metrics': {
+                    'mean_hr': float(session['mean_hr']) if session.get('mean_hr') is not None else None,
+                    'mean_rr': float(session['mean_rr']) if session.get('mean_rr') is not None else None,
+                    'count_rr': int(session['count_rr']) if session.get('count_rr') is not None else None,
+                    'rmssd': float(session['rmssd']) if session.get('rmssd') is not None else None,
+                    'sdnn': float(session['sdnn']) if session.get('sdnn') is not None else None,
+                    'pnn50': float(session['pnn50']) if session.get('pnn50') is not None else None,
+                    'cv_rr': float(session['cv_rr']) if session.get('cv_rr') is not None else None,
+                    'defa': float(session['defa']) if session.get('defa') is not None else None,
+                    'sd2_sd1': float(session['sd2_sd1']) if session.get('sd2_sd1') is not None else None
+                }
+            }
+            sessions_data.append(session_dict)
+        
+        # Generate plots directly using HRVPlotGenerator
+        from plot_generator import HRVPlotGenerator
+        plot_generator = HRVPlotGenerator()
+        
+        plots = {}
+        metrics = ['rmssd', 'sdnn']
+        
+        for metric in metrics:
+            try:
+                logger.info(f"Generating {metric} plot for {len(sessions_data)} rest sessions")
+                
+                # Generate plot using DIRECT plot generation
+                plot_base64, stats = plot_generator.generate_trend_plot(
+                    sessions_data, [], metric, 'rest', 'Baseline'
+                )
+                
+                plots[metric] = {
+                    'success': True,
+                    'plot_data': plot_base64,
+                    'metadata': {
+                        'metric': metric,
+                        'tag': 'rest',
+                        'type': 'baseline',
+                        'data_points': len(sessions_data),
+                        'statistics': stats
+                    }
+                }
+                
+            except Exception as e:
+                logger.error(f"Error generating {metric} rest baseline plot: {str(e)}")
+                plots[metric] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        return jsonify({
+            'success': True,
+            'plots': plots,
+            'sessions_count': len(sessions)
+        })
         
     except Exception as e:
         logger.error(f"Error generating rest baseline plots: {str(e)}")
