@@ -777,6 +777,54 @@ def get_hrv_trend_plot():
         logger.error(f"Error getting HRV trend plot: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/v1/plots/multi-metric/<user_id>/<tag>', methods=['GET'])
+def get_multi_metric_plots(user_id: str, tag: str):
+    """Get multiple HRV metric plots for a user and tag (RMSSD and SDNN)"""
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        # Get session data
+        sessions_data, sleep_events_data = get_sessions_data_for_plot(user_id, tag)
+        
+        if not sessions_data and not sleep_events_data:
+            return jsonify({
+                'error': 'No data found',
+                'sessions_count': 0,
+                'sleep_events_count': 0
+            })
+        
+        # Define metrics to generate (modular for easy expansion)
+        metrics_to_generate = ['rmssd', 'sdnn']
+        plots_result = {}
+        
+        for metric in metrics_to_generate:
+            try:
+                from plot_generator import generate_hrv_plot
+                result = generate_hrv_plot(sessions_data, sleep_events_data, metric, tag)
+                plots_result[metric] = result
+            except Exception as plot_error:
+                logger.error(f"Error generating {metric} plot: {str(plot_error)}")
+                plots_result[metric] = {
+                    'success': False,
+                    'error': str(plot_error),
+                    'plot_data': None,
+                    'metadata': None
+                }
+        
+        return jsonify({
+            'success': True,
+            'tag': tag,
+            'sessions_count': len(sessions_data),
+            'sleep_events_count': len(sleep_events_data),
+            'plots': plots_result,
+            'metrics_generated': metrics_to_generate
+        })
+        
+    except Exception as e:
+        logger.error(f"Multi-metric plot generation error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/v1/debug/plot-test/<user_id>/<tag>/<metric>', methods=['GET'])
 def debug_plot_generation(user_id: str, tag: str, metric: str):
     """Debug endpoint to test plot generation with detailed error reporting"""

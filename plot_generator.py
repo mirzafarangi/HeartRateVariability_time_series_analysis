@@ -40,8 +40,8 @@ class HRVPlotGenerator:
         'sd2_sd1': {'unit': 'ratio', 'display_name': 'SD2/SD1', 'color': '#BB8FCE'}
     }
     
-    def __init__(self, width: int = 12, height: int = 8, dpi: int = 150):
-        """Initialize plot generator with display parameters"""
+    def __init__(self, width: int = 10, height: int = 6, dpi: int = 200):
+        """Initialize plot generator with mobile-friendly display parameters"""
         self.width = width
         self.height = height
         self.dpi = dpi
@@ -83,8 +83,10 @@ class HRVPlotGenerator:
             if df.empty:
                 return self._generate_empty_plot(config['display_name'], tag)
                 
-            # Create the plot
+            # Create the plot with professional styling
             fig, ax = plt.subplots(figsize=(self.width, self.height), dpi=self.dpi)
+            fig.patch.set_facecolor('white')
+            ax.set_facecolor('white')
             
             # Calculate statistics
             values = df['value'].values
@@ -93,23 +95,30 @@ class HRVPlotGenerator:
             std_val = np.std(values)
             p10, p90 = np.percentile(values, [10, 90])
             
-            # Plot SD bands (±1 and ±2 standard deviations)
+            # Professional color scheme
+            primary_color = '#007AFF'  # iOS blue
+            secondary_color = '#34C759'  # iOS green
+            accent_color = '#FF9500'  # iOS orange
+            light_gray = '#F2F2F7'  # iOS light gray
+            medium_gray = '#8E8E93'  # iOS medium gray
+            
+            # Plot smooth SD bands with gradient effect
             ax.fill_between(df['date'], mean_val - 2*std_val, mean_val + 2*std_val, 
-                           alpha=0.15, color='red', label='±2 SD')
+                           alpha=0.1, color=accent_color, label='±2 SD', linewidth=0)
             ax.fill_between(df['date'], mean_val - std_val, mean_val + std_val, 
-                           alpha=0.25, color='orange', label='±1 SD')
+                           alpha=0.15, color=accent_color, label='±1 SD', linewidth=0)
             
-            # Plot percentile lines
-            ax.axhline(y=p90, color='gray', linestyle='--', alpha=0.7, linewidth=2, label='90th Percentile')
-            ax.axhline(y=p10, color='gray', linestyle='--', alpha=0.7, linewidth=2, label='10th Percentile')
+            # Plot percentile lines with subtle styling
+            ax.axhline(y=p90, color=medium_gray, linestyle='--', alpha=0.6, linewidth=1.5, label='90th Percentile')
+            ax.axhline(y=p10, color=medium_gray, linestyle='--', alpha=0.6, linewidth=1.5, label='10th Percentile')
             
-            # Plot rolling average line
-            ax.plot(df['date'], rolling_avg, color='green', linewidth=3, 
-                   label=f'{rolling_window}-Point Average', zorder=3)
+            # Plot smooth rolling average line
+            ax.plot(df['date'], rolling_avg, color=secondary_color, linewidth=3, 
+                   label=f'{rolling_window}-Day Avg', zorder=3, alpha=0.9)
             
-            # Plot data points
-            ax.scatter(df['date'], df['value'], color=config['color'], 
-                      s=80, alpha=0.8, zorder=4, label='Data Points')
+            # Plot data points with better styling
+            ax.scatter(df['date'], df['value'], color=primary_color, 
+                      s=60, alpha=0.8, zorder=4, label='Data Points', edgecolors='white', linewidth=1)
             
             # Formatting
             self._format_plot(ax, config, tag, title_suffix, len(df))
@@ -167,30 +176,41 @@ class HRVPlotGenerator:
         return df.sort_values('date')
         
     def _format_plot(self, ax, config: Dict, tag: str, title_suffix: str, df_length: int = 1):
-        """Apply scientific formatting to the plot"""
-        # Title
+        """Apply professional mobile-friendly formatting to the plot"""
+        # Professional title with better typography
         title = f"{config['display_name']} Trend Analysis - {tag.title()}"
         if title_suffix:
             title += f" {title_suffix}"
-        ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+        ax.set_title(title, fontsize=14, fontweight='600', pad=15, color='#1C1C1E')
         
-        # Axes labels
-        ax.set_xlabel('Date', fontsize=12, fontweight='semibold')
-        ax.set_ylabel(f"{config['display_name']} ({config['unit']})", fontsize=12, fontweight='semibold')
+        # Clean axes labels with iOS-style typography
+        ax.set_xlabel('Date', fontsize=11, fontweight='500', color='#3C3C43')
+        ax.set_ylabel(f"{config['display_name']} ({config['unit']})", fontsize=11, fontweight='500', color='#3C3C43')
         
-        # Date formatting
+        # Professional date formatting
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        # Fix: Use DataFrame length to avoid type conversion error
         interval = max(1, df_length // 6) if df_length > 6 else 1
         ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=0, fontsize=9, color='#8E8E93')
+        plt.setp(ax.yaxis.get_majorticklabels(), fontsize=9, color='#8E8E93')
         
-        # Grid and styling
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper right', framealpha=0.9)
+        # Subtle grid with iOS-style colors
+        ax.grid(True, alpha=0.2, color='#C7C7CC', linewidth=0.5)
+        ax.set_axisbelow(True)
         
-        # Tight layout
-        plt.tight_layout()
+        # Professional legend with better positioning
+        legend = ax.legend(loc='upper right', framealpha=0.95, fancybox=True, 
+                          shadow=False, fontsize=8, edgecolor='#E5E5EA')
+        legend.get_frame().set_facecolor('#FFFFFF')
+        
+        # Remove top and right spines for cleaner look
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#E5E5EA')
+        ax.spines['bottom'].set_color('#E5E5EA')
+        
+        # Tight layout with proper padding
+        plt.tight_layout(pad=1.5)
         
     def _generate_stats_text(self, values: np.ndarray, unit: str) -> str:
         """Generate statistics text box content"""
