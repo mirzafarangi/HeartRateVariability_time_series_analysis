@@ -1498,6 +1498,136 @@ def get_plot_statistics(user_id: str):
         return jsonify({'error': 'Internal server error'}), 500
 
 # =====================================================
+# NEW ON-DEMAND PLOT ENDPOINTS (v4.0.0)
+# =====================================================
+
+# Import the new on-demand plot service
+from new_plot_endpoints import OnDemandPlotService
+
+# Initialize the service (will be done after connection pool is ready)
+on_demand_plot_service = None
+
+def ensure_on_demand_service():
+    """Ensure on-demand plot service is initialized"""
+    global on_demand_plot_service
+    if on_demand_plot_service is None and connection_pool is not None:
+        on_demand_plot_service = OnDemandPlotService(connection_pool)
+    return on_demand_plot_service
+
+@app.route('/api/v1/sleep/events/<user_id>', methods=['GET'])
+def get_sleep_event_ids(user_id: str):
+    """
+    Get last N sleep event IDs for user
+    
+    Query parameters:
+        limit: Number of events to return (default: 7)
+    
+    Returns:
+        JSON with list of event IDs sorted descending
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        service = ensure_on_demand_service()
+        if not service:
+            return jsonify({'error': 'Service not available'}), 503
+        
+        limit = int(request.args.get('limit', 7))
+        event_ids = service.get_sleep_event_ids(user_id, limit)
+        
+        return jsonify({
+            'success': True,
+            'event_ids': event_ids,
+            'count': len(event_ids)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting sleep event IDs: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/rest-baseline/<user_id>', methods=['POST'])
+def generate_rest_baseline_plots(user_id: str):
+    """
+    Generate Rest Baseline Trends (RMSSD + SDNN)
+    
+    Returns:
+        JSON with plot data and statistics
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        service = ensure_on_demand_service()
+        if not service:
+            return jsonify({'error': 'Service not available'}), 503
+        
+        result = service.generate_rest_baseline_plots(user_id)
+        
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 404
+        
+    except Exception as e:
+        logger.error(f"Error generating rest baseline plots: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/sleep-event/<user_id>/<int:event_id>', methods=['POST'])
+def generate_sleep_event_plots(user_id: str, event_id: int):
+    """
+    Generate Sleep Event Trends (RMSSD + SDNN for specific event_id)
+    
+    Returns:
+        JSON with plot data and statistics
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        service = ensure_on_demand_service()
+        if not service:
+            return jsonify({'error': 'Service not available'}), 503
+        
+        result = service.generate_sleep_event_plots(user_id, event_id)
+        
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 404
+        
+    except Exception as e:
+        logger.error(f"Error generating sleep event plots: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/plots/sleep-baseline/<user_id>', methods=['POST'])
+def generate_sleep_baseline_plots(user_id: str):
+    """
+    Generate Sleep Baseline Trends (RMSSD + SDNN averaged per event_id)
+    
+    Returns:
+        JSON with plot data and statistics
+    """
+    try:
+        if not validate_user_id(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        service = ensure_on_demand_service()
+        if not service:
+            return jsonify({'error': 'Service not available'}), 503
+        
+        result = service.generate_sleep_baseline_plots(user_id)
+        
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 404
+        
+    except Exception as e:
+        logger.error(f"Error generating sleep baseline plots: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# =====================================================
 # ERROR HANDLERS
 # =====================================================
 
