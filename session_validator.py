@@ -170,9 +170,9 @@ class EventIdValidator(BaseValidator):
                 result.add_error(field_name, f"Event ID must be a number or string, got {type(value).__name__}", "INVALID_TYPE", value)
                 return result
             
-            # Validate positive integer
-            if event_id <= 0:
-                result.add_error(field_name, "Event ID must be a positive integer", "INVALID_VALUE", value)
+            # Validate non-negative integer (0 is valid)
+            if event_id < 0:
+                result.add_error(field_name, "Event ID must be a non-negative integer (0 or greater)", "INVALID_VALUE", value)
                 return result
             
             result.cleaned_data[field_name] = event_id
