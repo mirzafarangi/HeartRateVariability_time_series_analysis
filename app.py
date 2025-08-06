@@ -70,6 +70,14 @@ def return_db_connection(conn):
     """Return database connection to pool"""
     connection_pool.putconn(conn)
 
+# Initialize connection pool when module is imported (for deployment)
+try:
+    initialize_connection_pool()
+    logger.info("🚀 Connection pool initialized on module import")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize connection pool on import: {e}")
+    # Don't raise here - let the app start and handle errors gracefully
+
 # =====================================================
 # VALIDATION FUNCTIONS
 # =====================================================
