@@ -208,22 +208,22 @@ def upload_session():
                 cursor.execute("""
                     INSERT INTO sessions (
                         session_id, user_id, tag, subtag, event_id,
-                        recorded_at, status,
-                        mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1,
-                        rr_intervals
+                        duration_minutes, recorded_at, rr_intervals, rr_count,
+                        status, processed_at,
+                        mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
                     ) VALUES (
                         %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
                         %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
-                    session_id, user_id, tag, subtag, event_id,
-                    recorded_at, 'completed',
+                    session_id, user_id, tag, subtag or '', event_id,
+                    data.get('duration_minutes', len(rr_intervals) // 60 or 1), recorded_at, rr_intervals, len(rr_intervals),
+                    'completed', datetime.now(timezone.utc),
                     hrv_metrics['mean_hr'], hrv_metrics['mean_rr'], hrv_metrics['count_rr'],
                     hrv_metrics['rmssd'], hrv_metrics['sdnn'], hrv_metrics['pnn50'],
-                    hrv_metrics['cv_rr'], hrv_metrics['defa'], hrv_metrics['sd2_sd1'],
-                    rr_intervals
+                    hrv_metrics['cv_rr'], hrv_metrics['defa'], hrv_metrics['sd2_sd1']
                 ))
                 conn.commit()
         finally:
