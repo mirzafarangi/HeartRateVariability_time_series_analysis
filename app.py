@@ -231,11 +231,17 @@ def upload_session():
         
         logger.info(f"✅ Session {session_id} processed and stored successfully")
         
+        # Convert NumPy types to Python native types for JSON serialization
+        serializable_metrics = {
+            key: float(value) if hasattr(value, 'item') else value
+            for key, value in hrv_metrics.items()
+        }
+        
         return jsonify({
             'success': True,
             'session_id': session_id,
             'status': 'completed',
-            'hrv_metrics': hrv_metrics,
+            'hrv_metrics': serializable_metrics,
             'processed_at': datetime.now(timezone.utc).isoformat()
         })
         
