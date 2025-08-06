@@ -111,16 +111,19 @@ def get_database_stats(cursor):
     
     # Count sessions
     cursor.execute('SELECT COUNT(*) FROM public.sessions;')
-    stats['sessions'] = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    stats['sessions'] = result['count'] if result else 0
     
     # Count plots
     cursor.execute('SELECT COUNT(*) FROM public.hrv_plots;')
-    stats['plots'] = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    stats['plots'] = result['count'] if result else 0
     
     # Count profiles (if table exists)
     try:
         cursor.execute('SELECT COUNT(*) FROM public.profiles;')
-        stats['profiles'] = cursor.fetchone()[0]
+        result = cursor.fetchone()
+        stats['profiles'] = result['count'] if result else 0
     except:
         stats['profiles'] = 0
     
