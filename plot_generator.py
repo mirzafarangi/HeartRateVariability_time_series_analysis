@@ -51,7 +51,7 @@ class HRVPlotGenerator:
                           sleep_events_data: List[Dict],
                           metric: str, 
                           tag: str,
-                          title_suffix: str = "") -> str:
+                          title_suffix: str = "") -> Tuple[str, Dict[str, float]]:
         """
         Generate a scientific trend analysis plot for an HRV metric
         
@@ -63,7 +63,7 @@ class HRVPlotGenerator:
             title_suffix: Optional title suffix
             
         Returns:
-            Base64 encoded PNG image string
+            Tuple of (Base64 encoded PNG image string, statistics dict)
         """
         try:
             # Get metric configuration
@@ -81,7 +81,9 @@ class HRVPlotGenerator:
                 rolling_window = 3  # 3-session rolling average for non-sleep
                 
             if df.empty:
-                return self._generate_empty_plot(config['display_name'], tag)
+                empty_plot = self._generate_empty_plot(config['display_name'], tag)
+                empty_stats = {'mean': 0.0, 'std': 0.0, 'min': 0.0, 'max': 0.0, 'p10': 0.0, 'p90': 0.0}
+                return empty_plot, empty_stats
                 
             # Create the plot with professional styling
             fig, ax = plt.subplots(figsize=(self.width, self.height), dpi=self.dpi)
@@ -91,9 +93,22 @@ class HRVPlotGenerator:
             # Calculate statistics
             values = df['value'].values
             rolling_avg = df['value'].rolling(window=rolling_window, center=True).mean()
-            mean_val = np.mean(values)
-            std_val = np.std(values)
+            mean_val = float(np.mean(values))
+            std_val = float(np.std(values))
+            min_val = float(np.min(values))
+            max_val = float(np.max(values))
             p10, p90 = np.percentile(values, [10, 90])
+            p10, p90 = float(p10), float(p90)
+            
+            # Store calculated statistics
+            calculated_stats = {
+                'mean': mean_val,
+                'std': std_val,
+                'min': min_val,
+                'max': max_val,
+                'p10': p10,
+                'p90': p90
+            }
             
             # Professional color scheme
             primary_color = '#007AFF'  # iOS blue
@@ -129,11 +144,14 @@ class HRVPlotGenerator:
                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             
             # Convert to base64
-            return self._fig_to_base64(fig)
+            plot_base64 = self._fig_to_base64(fig)
+            return plot_base64, calculated_stats
             
         except Exception as e:
             logger.error(f"Error generating plot for {metric}: {str(e)}")
-            return self._generate_error_plot(str(e))
+            error_plot = self._generate_error_plot(str(e))
+            empty_stats = {'mean': 0.0, 'std': 0.0, 'min': 0.0, 'max': 0.0, 'p10': 0.0, 'p90': 0.0}
+            return error_plot, empty_stats
             
     def _prepare_session_data(self, sessions: List[Dict], metric: str, tag: str) -> pd.DataFrame:
         """Prepare session data for plotting"""
@@ -263,22 +281,15 @@ def generate_hrv_plot(sessions_data: List[Dict],
         logger.info(f"Sessions data count: {len(sessions_data)}, Sleep events count: {len(sleep_events_data)}")
         
         generator = HRVPlotGenerator()
-        plot_base64 = generator.generate_trend_plot(sessions_data, sleep_events_data, metric, tag)
+        plot_base64, calculated_stats = generator.generate_trend_plot(sessions_data, sleep_events_data, metric, tag)
         
-        # Create metadata
+        # Create metadata with calculated statistics
         metadata = {
             'metric': metric,
             'tag': tag,
             'data_points': len(sessions_data) if tag != 'sleep' else len(sleep_events_data),
             'date_range': 'N/A',  # Will be calculated properly later
-            'statistics': {
-                'mean': 0.0,
-                'std': 0.0,
-                'min': 0.0,
-                'max': 0.0,
-                'p10': 0.0,
-                'p90': 0.0
-            }
+            'statistics': calculated_stats
         }
         
         logger.info(f"Plot generation successful for metric={metric}, tag={tag}")
