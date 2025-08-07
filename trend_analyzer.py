@@ -11,7 +11,7 @@ are performed server-side and returned as structured JSON.
 
 import numpy as np
 from typing import List, Dict, Optional, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -221,7 +221,7 @@ class TrendAnalyzer:
             return None
         
         # Get sessions from last 7 days
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         seven_days_ago = now - timedelta(days=7)
         
         recent_sessions = [
@@ -242,7 +242,7 @@ class TrendAnalyzer:
             return None
         
         # Get sessions from last 7 days
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         seven_days_ago = now - timedelta(days=7)
         
         recent_sessions = [
@@ -274,10 +274,21 @@ class TrendAnalyzer:
             return str(date_input)
     
     def _parse_date(self, date_input: Any) -> datetime:
-        """Parse date input to datetime object"""
+        """Parse date input to timezone-aware datetime object"""
         if isinstance(date_input, str):
-            return datetime.fromisoformat(date_input.replace('Z', '+00:00'))
+            # Handle ISO format with Z suffix
+            if date_input.endswith('Z'):
+                return datetime.fromisoformat(date_input.replace('Z', '+00:00'))
+            else:
+                dt = datetime.fromisoformat(date_input)
+                # If naive datetime, assume UTC
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
         elif isinstance(date_input, datetime):
+            # If naive datetime, assume UTC
+            if date_input.tzinfo is None:
+                return date_input.replace(tzinfo=timezone.utc)
             return date_input
         else:
             raise ValueError(f"Cannot parse date: {date_input}")
