@@ -266,9 +266,9 @@ def refresh_trends():
         if not user_id:
             return jsonify({'error': 'user_id is required'}), 400
         
-        # Validate user_id format
-        if not validate_user_id(user_id):
-            return jsonify({'error': 'Invalid user_id format'}), 400
+        # Validate user_id format - must be valid UUID for database
+        if not validate_uuid(user_id):
+            return jsonify({'error': 'Invalid user_id format - must be a valid UUID'}), 400
         
         conn = get_db_connection()
         if not conn:
