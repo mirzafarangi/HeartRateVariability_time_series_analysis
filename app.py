@@ -11,6 +11,7 @@ NO PLOT GENERATION - Pure session processing and database operations only.
 import os
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 from uuid import UUID
