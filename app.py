@@ -26,7 +26,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from database_config import DatabaseConfig
 from hrv_metrics import calculate_hrv_metrics
 from session_validator import validate_session_enhanced, ValidationResult
-from trend_analyzer import trend_analyzer
+from trend_analyzer import trend_analyzer_fixed as trend_analyzer
 
 # Configure logging
 logging.basicConfig(
@@ -328,6 +328,76 @@ def delete_session(session_id: str):
         
     except Exception as e:
         logger.error(f"❌ Error deleting session: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/sessions/processed/<user_id>', methods=['GET'])
+def get_processed_sessions(user_id: str):
+    """Get all processed sessions for a user"""
+    try:
+        if not validate_uuid(user_id):
+            return jsonify({'error': 'Invalid user_id format'}), 400
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT 
+                        session_id,
+                        tag,
+                        subtag,
+                        event_id,
+                        recorded_at,
+                        processed_at,
+                        duration_minutes,
+                        status,
+                        rmssd,
+                        mean_hr,
+                        sdnn,
+                        pnn50,
+                        triangular_index,
+                        tinn,
+                        sd1,
+                        sd2,
+                        sd_ratio
+                    FROM sessions 
+                    WHERE user_id = %s AND status = 'completed'
+                    ORDER BY recorded_at DESC
+                """, (user_id,))
+                
+                sessions = cursor.fetchall()
+                
+                # Format sessions with HRV metrics
+                formatted_sessions = []
+                for session in sessions:
+                    session_dict = dict(session)
+                    
+                    # Format timestamps
+                    if session_dict['recorded_at']:
+                        session_dict['recorded_at'] = session_dict['recorded_at'].isoformat()
+                    if session_dict['processed_at']:
+                        session_dict['processed_at'] = session_dict['processed_at'].isoformat()
+                    
+                    # Group HRV metrics
+                    hrv_metrics = {}
+                    for metric in ['rmssd', 'mean_hr', 'sdnn', 'pnn50', 'triangular_index', 'tinn', 'sd1', 'sd2', 'sd_ratio']:
+                        if session_dict.get(metric) is not None:
+                            hrv_metrics[metric] = float(session_dict[metric])
+                        del session_dict[metric]  # Remove from main dict
+                    
+                    session_dict['hrv_metrics'] = hrv_metrics
+                    formatted_sessions.append(session_dict)
+                
+        finally:
+            return_db_connection(conn)
+        
+        logger.info(f"✅ Retrieved {len(formatted_sessions)} processed sessions for user {user_id}")
+        return jsonify({
+            'sessions': formatted_sessions,
+            'total_count': len(formatted_sessions)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting processed sessions: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
 # =====================================================
