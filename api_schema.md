@@ -1,28 +1,36 @@
 # HRV Brain API Schema Documentation
 
-**Version:** 4.0.0 Fresh Start  
+**Version:** 5.0.0 Polish Architecture  
 **Date:** 2025-08-07  
-**Status:** Production Ready  
+**Status:** Production Ready with Trend Analysis  
 **Branch:** fresh_polish_api  
+**Architecture:** polish_architecture.md v1.0
 
 ## Overview
 
-Clean, minimal API implementation focused exclusively on core HRV session processing. All charting and visualization functionality has been removed to establish a clean foundation for future clinical-grade implementations.
+Complete centralized API implementation for HRV session processing and RMSSD trend analysis. Implements the full polish_architecture.md specification with three clinical-grade trend endpoints, unified JSON response schema, and modular backend statistical processing.
 
 ## Architecture
 
 ### Core Components
 
-**Primary Application:** `app.py` (12.8KB)
+**Primary Application:** `app.py` (15.2KB)
 - Flask web application with CORS enabled
 - PostgreSQL connection pooling via psycopg2
 - Comprehensive error handling and logging
 - Production-ready with Gunicorn WSGI server
+- **NEW:** Three trend analysis endpoints with unified JSON schema
 
-**Dependencies:**
+**Core Dependencies:**
 - `database_config.py` - Database connection management and configuration
 - `hrv_metrics.py` - Pure NumPy implementation of 9 HRV metrics
 - `session_validator.py` - Modular validation system with enhanced error reporting
+- **NEW:** `trend_analyzer.py` - Centralized trend analysis with rolling averages, baselines, SD bands
+
+**Database Components:**
+- `database_schema.sql` - Complete schema with trend analysis indexes
+- `add_aggregated_view.sql` - Aggregated sleep events view
+- `deploy_aggregated_view.py` - Database deployment script
 
 ### Database Integration
 
@@ -30,8 +38,12 @@ Clean, minimal API implementation focused exclusively on core HRV session proces
 **Connection:** ThreadedConnectionPool for production scalability  
 **Schema:** Unified sessions table with 9 HRV metric columns  
 **Authentication:** Environment variable based configuration  
+**NEW Views:** `aggregated_sleep_events` - Pre-computed sleep event aggregations  
+**NEW Indexes:** Optimized indexes for trend queries (rest, sleep interval, sleep event)  
 
 ## API Endpoints
+
+**Total Endpoints:** 8 (5 core + 3 trend analysis)
 
 ### Health Monitoring
 
@@ -160,6 +172,143 @@ Delete a specific session by session ID.
 {
   "error": "Session not found"
 }
+```
+
+### Trend Analysis Endpoints
+
+**NEW:** Three clinical-grade trend analysis endpoints implementing the unified JSON response schema from polish_architecture.md.
+
+#### GET /api/v1/trends/rest
+Analyze non-sleep session trend (RMSSD over time).
+
+**Parameters:**
+- `user_id` (required): User ID for trend analysis
+
+**Data Source:** Sessions with tag='rest', event_id=0
+
+**Response:**
+```json
+{
+  "raw": [
+    { "date": "2025-08-05", "rmssd": 42.1 },
+    { "date": "2025-08-06", "rmssd": 44.3 }
+  ],
+  "rolling_avg": [
+    { "date": "2025-08-06", "rmssd": 43.2 }
+  ],
+  "percentile_10": 40.0,
+  "percentile_90": 49.0
+}
+```
+
+**Features:**
+- Rolling average (trailing N=3) if ≥3 points
+- No baseline (non-sleep data)
+- No SD bands (non-sleep data)
+- Percentiles if ≥30 sessions
+
+#### GET /api/v1/trends/sleep-interval
+Analyze sleep intervals trend (all intervals from latest sleep event).
+
+**Parameters:**
+- `user_id` (required): User ID for trend analysis
+
+**Data Source:** Sessions with tag='sleep', event_id=latest
+
+**Response:**
+```json
+{
+  "raw": [
+    { "date": "2025-08-06", "rmssd": 45.2 },
+    { "date": "2025-08-06", "rmssd": 43.8 }
+  ],
+  "rolling_avg": [
+    { "date": "2025-08-06", "rmssd": 44.5 }
+  ],
+  "baseline": 44.0,
+  "sd_band": {
+    "upper": 46.0,
+    "lower": 42.0
+  },
+  "percentile_10": 40.0,
+  "percentile_90": 49.0
+}
+```
+
+**Features:**
+- Rolling average (trailing N=3)
+- Sleep 7-day baseline (computed from all sleep data)
+- SD Band: ±1 SD from 7-day baseline
+- Percentiles if sufficient data
+
+#### GET /api/v1/trends/sleep-event
+Analyze aggregated sleep event trend (one point per sleep event).
+
+**Parameters:**
+- `user_id` (required): User ID for trend analysis
+
+**Data Source:** `aggregated_sleep_events` view
+
+**Response:**
+```json
+{
+  "raw": [
+    { "date": "2025-08-05", "rmssd": 44.1 },
+    { "date": "2025-08-06", "rmssd": 45.3 },
+    { "date": "2025-08-07", "rmssd": 43.8 }
+  ],
+  "rolling_avg": [
+    { "date": "2025-08-07", "rmssd": 44.4 }
+  ],
+  "baseline": 44.2,
+  "sd_band": {
+    "upper": 45.8,
+    "lower": 42.6
+  }
+}
+```
+
+**Features:**
+- Rolling average over event means
+- Optional 7-event baseline
+- SD Band: ±1 SD of event averages
+- Percentiles only if ≥30 events
+
+## Trend Analysis Architecture
+
+### TrendAnalyzer Class (`trend_analyzer.py`)
+
+**Core Methods:**
+- `analyze_rest_trend()` - Non-sleep session analysis
+- `analyze_sleep_interval_trend()` - Latest sleep event intervals
+- `analyze_sleep_event_trend()` - Aggregated sleep events
+
+**Statistical Features:**
+- Rolling average calculation (trailing N=3)
+- Sleep baseline computation (7-day average)
+- SD band calculation (±1 standard deviation)
+- Percentile analysis (10th/90th percentiles)
+- Timezone-aware datetime handling
+
+**Unified JSON Schema:**
+All trend endpoints return the same structured format with optional fields based on data availability and trend type.
+
+### Database Views
+
+#### aggregated_sleep_events
+```sql
+CREATE VIEW aggregated_sleep_events AS
+SELECT
+  user_id,
+  event_id,
+  MIN(recorded_at) AS event_start,
+  MAX(recorded_at) AS event_end,
+  AVG(rmssd) AS avg_rmssd,
+  COUNT(*) AS interval_count,
+  STDDEV(rmssd) AS rmssd_stddev
+FROM sessions
+WHERE tag = 'sleep' AND event_id > 0
+GROUP BY user_id, event_id;
 ```
 
 ## Data Processing Pipeline
@@ -332,23 +481,66 @@ pandas==2.1.1
 **diagnose_user_data.py** - User data integrity analysis  
 **session_validator.py** - Standalone validation testing  
 
-## Removed Functionality
+## Architecture Compliance
 
-The following components have been completely removed in this clean version:
+### polish_architecture.md Implementation
 
-- All plot generation endpoints and logic
-- Chart rendering and visualization code
-- Trend analysis and statistical plotting
-- Image generation and storage
-- Batch processing endpoints
-- Plot storage database tables
+**✅ Database Design (Section II):**
+- Sessions table with event_id grouping ✅
+- Required indexes for trend queries ✅
+- aggregated_sleep_events view ✅
 
-This creates a clean foundation focused exclusively on core session processing, ready for future clinical-grade charting implementations with centralized architecture.
+**✅ API Design (Section III):**
+- Three trend endpoints as specified ✅
+- Unified JSON response schema ✅
+- Backend statistical processing ✅
+
+**✅ Backend Responsibilities:**
+- Rolling average (trailing N=3) ✅
+- Sleep baseline calculation ✅
+- SD band computation ✅
+- Percentile analysis ✅
+- Graceful fallback for missing data ✅
+
+### Production Features
+
+**Scalability:**
+- Optimized database indexes for trend queries
+- Connection pooling for concurrent requests
+- Efficient aggregated views for complex queries
+
+**Reliability:**
+- Comprehensive error handling
+- Timezone-aware datetime processing
+- Robust data validation and cleaning
+
+**Maintainability:**
+- Modular trend analysis architecture
+- Clean separation of concerns
+- Comprehensive logging and monitoring
 
 ## API Versioning
 
 **Current Version:** v1  
 **Base Path:** /api/v1  
 **Versioning Strategy:** URL path versioning  
+**Architecture Version:** polish_architecture.md v1.0
 
-Future versions will maintain backward compatibility while introducing new features in a structured, maintainable manner.
+### Endpoint Summary
+
+| Endpoint | Method | Purpose | Status |
+|----------|--------|---------|--------|
+| `/health` | GET | Basic health check | ✅ Active |
+| `/health/detailed` | GET | Database connectivity check | ✅ Active |
+| `/api/v1/sessions/upload` | POST | Upload and process sessions | ✅ Active |
+| `/api/v1/sessions/statistics/{user_id}` | GET | User session statistics | ✅ Active |
+| `/api/v1/sessions/{session_id}` | DELETE | Delete session | ✅ Active |
+| `/api/v1/trends/rest` | GET | Non-sleep trend analysis | ✅ NEW |
+| `/api/v1/trends/sleep-interval` | GET | Sleep interval trend analysis | ✅ NEW |
+| `/api/v1/trends/sleep-event` | GET | Sleep event trend analysis | ✅ NEW |
+
+**Total Active Endpoints:** 8  
+**Core Processing:** 5 endpoints  
+**Trend Analysis:** 3 endpoints  
+
+Future versions will maintain backward compatibility while introducing new HRV metrics (SDNN, pNN50, etc.) using the same unified architecture pattern.
