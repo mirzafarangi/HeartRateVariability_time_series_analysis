@@ -249,128 +249,142 @@ def upload_session():
         logger.error(f"❌ Error processing session: {str(e)}")
         return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
-@app.route('/api/v1/sessions/status/<session_id>', methods=['GET'])
-def get_session_status(session_id: str):
-    """Get processing status of a specific session"""
+@app.route('/api/v1/trends/refresh', methods=['POST'])
+def refresh_trends():
+    """Generate all three HRV trend plots for a user in a single call.
+    
+    Three trend types based on user's exact scenario:
+    1. Rest Trend: All sessions with tag='rest' (event_id=0, individual points)
+    2. Sleep Event Trend: Only intervals from LAST sleep event (latest event_id>0)
+    3. Sleep Baseline: Aggregated per event_id across ALL sleep events (grouped averages)
+    """
     try:
-        if not validate_uuid(session_id):
-            return jsonify({'error': 'Invalid session_id format'}), 400
+        data = request.get_json()
+        user_id = data.get('user_id')
         
-        conn = get_db_connection()
+        if not user_id:
+            return jsonify({'error': 'user_id is required'}), 400
+        
+        # Validate user_id format
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT session_id, status, recorded_at, 
-                           mean_hr, mean_rr, count_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
-                    FROM sessions 
-                    WHERE session_id = %s
-                """, (session_id,))
-                
-                session = cursor.fetchone()
-        finally:
-            return_db_connection(conn)
-        
-        if not session:
-            return jsonify({'error': 'Session not found'}), 404
-        
-        return jsonify({
-            'session_id': session['session_id'],
-            'status': session['status'],
-            'recorded_at': session['recorded_at'].isoformat() if session['recorded_at'] else None,
-            'hrv_metrics': {
-                'mean_hr': session['mean_hr'],
-                'mean_rr': session['mean_rr'],
-                'count_rr': session['count_rr'],
-                'rmssd': session['rmssd'],
-                'sdnn': session['sdnn'],
-                'pnn50': session['pnn50'],
-                'cv_rr': session['cv_rr'],
-                'defa': session['defa'],
-                'sd2_sd1': session['sd2_sd1']
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ Error getting session status: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.route('/api/v1/sessions/processed/<user_id>', methods=['GET'])
-def get_processed_sessions(user_id: str):
-    """Get all processed sessions for a user"""
-    try:
-        if not validate_user_id(user_id):
+            uuid.UUID(user_id)
+        except ValueError:
             return jsonify({'error': 'Invalid user_id format'}), 400
         
-        # Get pagination parameters
-        limit = request.args.get('limit', 50, type=int)
-        offset = request.args.get('offset', 0, type=int)
-        tag_filter = request.args.get('tag')
-        
         conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Build query with optional tag filter
-                base_query = """
-                    SELECT session_id, tag, subtag, event_id, status,
-                           recorded_at, mean_hr, mean_rr, count_rr, 
-                           rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
+            cursor = conn.cursor()
+            
+            # 1. REST TREND: All sessions with tag='rest' (event_id = 0)
+            # Individual points for RMSSD, SDNN plotting
+            rest_query = """
+                SELECT recorded_at, rmssd, sdnn, mean_hr, mean_rr, count_rr, pnn50, cv_rr, defa, sd2_sd1
+                FROM sessions 
+                WHERE user_id = %s AND tag = 'rest' AND status = 'completed'
+                ORDER BY recorded_at ASC
+            """
+            cursor.execute(rest_query, (user_id,))
+            rest_data = cursor.fetchall()
+            
+            # 2. SLEEP EVENT TREND: Only intervals from the LAST sleep event
+            # First, find the latest event_id for this user
+            latest_event_query = """
+                SELECT MAX(event_id) 
+                FROM sessions 
+                WHERE user_id = %s AND tag = 'sleep' AND event_id > 0 AND status = 'completed'
+            """
+            cursor.execute(latest_event_query, (user_id,))
+            latest_event_result = cursor.fetchone()
+            
+            sleep_event_data = []
+            latest_event_id = None
+            if latest_event_result and latest_event_result[0]:
+                latest_event_id = latest_event_result[0]
+                
+                # Get all intervals from this specific event (sleep_interval_1, sleep_interval_2, etc.)
+                event_query = """
+                    SELECT recorded_at, rmssd, sdnn, mean_hr, mean_rr, count_rr, pnn50, cv_rr, defa, sd2_sd1, subtag
                     FROM sessions 
-                    WHERE user_id = %s AND status = 'completed'
+                    WHERE user_id = %s AND tag = 'sleep' AND event_id = %s AND status = 'completed'
+                    ORDER BY recorded_at ASC
                 """
-                count_query = "SELECT COUNT(*) FROM sessions WHERE user_id = %s AND status = 'completed'"
-                
-                params = [user_id]
-                if tag_filter:
-                    base_query += " AND tag = %s"
-                    count_query += " AND tag = %s"
-                    params.append(tag_filter)
-                
-                base_query += " ORDER BY recorded_at DESC LIMIT %s OFFSET %s"
-                params.extend([limit, offset])
-                
-                # Get sessions
-                cursor.execute(base_query, params)
-                sessions = cursor.fetchall()
-                
-                # Get total count
-                cursor.execute(count_query, params[:-2])  # Exclude limit/offset
-                total_count = cursor.fetchone()['count']
+                cursor.execute(event_query, (user_id, latest_event_id))
+                sleep_event_data = cursor.fetchall()
+            
+            # 3. SLEEP BASELINE: Aggregated per event_id (all sleep events)
+            # Each point represents avg RMSSD, SDNN for an entire event
+            baseline_query = """
+                SELECT 
+                    event_id,
+                    MIN(recorded_at) as event_start,
+                    AVG(rmssd) as avg_rmssd,
+                    AVG(sdnn) as avg_sdnn,
+                    AVG(mean_hr) as avg_mean_hr,
+                    AVG(mean_rr) as avg_mean_rr,
+                    SUM(count_rr) as total_count_rr,
+                    AVG(pnn50) as avg_pnn50,
+                    AVG(cv_rr) as avg_cv_rr,
+                    AVG(defa) as avg_defa,
+                    AVG(sd2_sd1) as avg_sd2_sd1,
+                    COUNT(*) as interval_count
+                FROM sessions 
+                WHERE user_id = %s AND tag = 'sleep' AND event_id > 0 AND status = 'completed'
+                GROUP BY event_id
+                ORDER BY event_start ASC
+            """
+            cursor.execute(baseline_query, (user_id,))
+            baseline_data = cursor.fetchall()
+            
+            # Convert data to JSON-serializable format
+            def serialize_row(row, columns):
+                result = {}
+                for i, value in enumerate(row):
+                    if isinstance(value, datetime):
+                        result[columns[i]] = value.isoformat()
+                    elif isinstance(value, Decimal):
+                        result[columns[i]] = float(value)
+                    else:
+                        result[columns[i]] = value
+                return result
+            
+            # Column definitions
+            metrics_columns = ['recorded_at', 'rmssd', 'sdnn', 'mean_hr', 'mean_rr', 'count_rr', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1']
+            baseline_columns = ['event_id', 'event_start', 'avg_rmssd', 'avg_sdnn', 'avg_mean_hr', 'avg_mean_rr', 'total_count_rr', 'avg_pnn50', 'avg_cv_rr', 'avg_defa', 'avg_sd2_sd1', 'interval_count']
+            event_columns = ['recorded_at', 'rmssd', 'sdnn', 'mean_hr', 'mean_rr', 'count_rr', 'pnn50', 'cv_rr', 'defa', 'sd2_sd1', 'subtag']
+            
+            response = {
+                'rest_trend': {
+                    'data': [serialize_row(row, metrics_columns) for row in rest_data],
+                    'count': len(rest_data),
+                    'description': 'Individual rest sessions (tag=rest, event_id=0)'
+                },
+                'sleep_event': {
+                    'data': [serialize_row(row, event_columns) for row in sleep_event_data],
+                    'count': len(sleep_event_data),
+                    'latest_event_id': latest_event_id,
+                    'description': f'Latest sleep event intervals (tag=sleep, event_id={latest_event_id})'
+                },
+                'sleep_baseline': {
+                    'data': [serialize_row(row, baseline_columns) for row in baseline_data],
+                    'count': len(baseline_data),
+                    'description': 'Aggregated sleep events (tag=sleep, grouped by event_id)'
+                },
+                'generated_at': datetime.utcnow().isoformat(),
+                'user_id': user_id
+            }
+            
+            return jsonify(response), 200
+            
         finally:
-            return_db_connection(conn)
-        
-        # Format response
-        formatted_sessions = []
-        for session in sessions:
-            formatted_sessions.append({
-                'session_id': session['session_id'],
-                'tag': session['tag'],
-                'subtag': session['subtag'],
-                'event_id': session['event_id'],
-                'status': session['status'],
-                'recorded_at': session['recorded_at'].isoformat() if session['recorded_at'] else None,
-                'hrv_metrics': {
-                    'mean_hr': session['mean_hr'],
-                    'mean_rr': session['mean_rr'],
-                    'count_rr': session['count_rr'],
-                    'rmssd': session['rmssd'],
-                    'sdnn': session['sdnn'],
-                    'pnn50': session['pnn50'],
-                    'cv_rr': session['cv_rr'],
-                    'defa': session['defa'],
-                    'sd2_sd1': session['sd2_sd1']
-                }
-            })
-        
-        return jsonify({
-            'sessions': formatted_sessions,
-            'total_count': total_count,
-            'limit': limit,
-            'offset': offset
-        })
-        
+            cursor.close()
+            conn.close()
+            
     except Exception as e:
-        logger.error(f"❌ Error getting processed sessions: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+        logger.error(f"Error in refresh_trends: {str(e)}")
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @app.route('/api/v1/sessions/statistics/<user_id>', methods=['GET'])
 def get_session_statistics(user_id: str):

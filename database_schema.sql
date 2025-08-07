@@ -115,19 +115,24 @@ CREATE POLICY "Users can delete own sessions" ON public.sessions
     FOR DELETE USING (auth.uid() = user_id);
 
 -- =============================================================================
--- 4. PERFORMANCE INDEXES
+-- 4. TRENDS ANALYSIS PERFORMANCE INDEXES
 -- =============================================================================
 
--- Primary performance indexes
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON public.sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_tag ON public.sessions(user_id, tag);
-CREATE INDEX IF NOT EXISTS idx_sessions_event_id ON public.sessions(event_id) WHERE event_id > 0;
-CREATE INDEX IF NOT EXISTS idx_sessions_status ON public.sessions(status);
-CREATE INDEX IF NOT EXISTS idx_sessions_recorded_at ON public.sessions(recorded_at);
+-- 1. Rest Trend: All sessions with tag='rest' (event_id = 0)
+CREATE INDEX IF NOT EXISTS idx_rest_trend 
+ON public.sessions(user_id, recorded_at DESC, rmssd, sdnn) WHERE tag = 'rest';
 
--- Composite indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_sessions_user_event ON public.sessions(user_id, event_id) WHERE event_id > 0;
-CREATE INDEX IF NOT EXISTS idx_sessions_tag_status ON public.sessions(tag, status);
+-- 2. Sleep Baseline: Aggregation by event_id (tag='sleep', event_id > 0)
+CREATE INDEX IF NOT EXISTS idx_sleep_baseline 
+ON public.sessions(user_id, event_id, rmssd, sdnn) WHERE tag = 'sleep' AND event_id > 0;
+
+-- 3. Sleep Event: Last event intervals (tag='sleep', specific event_id)
+CREATE INDEX IF NOT EXISTS idx_sleep_event_intervals 
+ON public.sessions(user_id, event_id, recorded_at, rmssd, sdnn, subtag) WHERE tag = 'sleep' AND event_id > 0;
+
+-- 4. Helper: Find latest sleep event_id quickly
+CREATE INDEX IF NOT EXISTS idx_latest_sleep_event 
+ON public.sessions(user_id, event_id DESC) WHERE tag = 'sleep' AND event_id > 0;
 
 -- HRV metrics performance index (added in v4.1.0)
 CREATE INDEX IF NOT EXISTS idx_sessions_hrv_metrics 
