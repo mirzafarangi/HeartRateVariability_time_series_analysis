@@ -26,6 +26,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from database_config import DatabaseConfig
 from hrv_metrics import calculate_hrv_metrics
 from session_validator import validate_session_enhanced, ValidationResult
+from trend_analyzer import trend_analyzer
 
 # Configure logging
 logging.basicConfig(
@@ -327,6 +328,146 @@ def delete_session(session_id: str):
         
     except Exception as e:
         logger.error(f"❌ Error deleting session: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# =====================================================
+# TREND ANALYSIS ENDPOINTS
+# =====================================================
+
+@app.route('/api/v1/trends/rest', methods=['GET'])
+def get_rest_trend():
+    """Get non-sleep session trend (RMSSD)"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id or not validate_user_id(user_id):
+            return jsonify({'error': 'Valid user_id parameter required'}), 400
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Get rest sessions (tag='rest', event_id=0)
+                cursor.execute("""
+                    SELECT recorded_at, rmssd
+                    FROM sessions 
+                    WHERE user_id = %s AND tag = 'rest' AND event_id = 0
+                      AND status = 'completed' AND rmssd IS NOT NULL
+                    ORDER BY recorded_at
+                """, (user_id,))
+                
+                sessions = cursor.fetchall()
+        finally:
+            return_db_connection(conn)
+        
+        # Convert to list of dicts for analyzer
+        session_list = [dict(session) for session in sessions]
+        
+        # Analyze trend
+        result = trend_analyzer.analyze_rest_trend(session_list)
+        
+        logger.info(f"✅ Rest trend analysis completed for user {user_id}: {len(session_list)} sessions")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ Error analyzing rest trend: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/trends/sleep-interval', methods=['GET'])
+def get_sleep_interval_trend():
+    """Get sleep intervals trend (all intervals of last event)"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id or not validate_user_id(user_id):
+            return jsonify({'error': 'Valid user_id parameter required'}), 400
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Get latest sleep event_id
+                cursor.execute("""
+                    SELECT MAX(event_id) as latest_event_id
+                    FROM sessions 
+                    WHERE user_id = %s AND tag = 'sleep' AND event_id > 0
+                      AND status = 'completed'
+                """, (user_id,))
+                
+                latest_event = cursor.fetchone()
+                if not latest_event or not latest_event['latest_event_id']:
+                    return jsonify({'raw': []})
+                
+                latest_event_id = latest_event['latest_event_id']
+                
+                # Get intervals from latest event
+                cursor.execute("""
+                    SELECT recorded_at, rmssd
+                    FROM sessions 
+                    WHERE user_id = %s AND tag = 'sleep' AND event_id = %s
+                      AND status = 'completed' AND rmssd IS NOT NULL
+                    ORDER BY recorded_at
+                """, (user_id, latest_event_id))
+                
+                interval_sessions = cursor.fetchall()
+                
+                # Get all sleep sessions for baseline calculation
+                cursor.execute("""
+                    SELECT recorded_at, rmssd
+                    FROM sessions 
+                    WHERE user_id = %s AND tag = 'sleep' AND event_id > 0
+                      AND status = 'completed' AND rmssd IS NOT NULL
+                    ORDER BY recorded_at
+                """, (user_id,))
+                
+                all_sleep_sessions = cursor.fetchall()
+        finally:
+            return_db_connection(conn)
+        
+        # Convert to lists of dicts for analyzer
+        interval_list = [dict(session) for session in interval_sessions]
+        all_sleep_list = [dict(session) for session in all_sleep_sessions]
+        
+        # Analyze trend
+        result = trend_analyzer.analyze_sleep_interval_trend(interval_list, all_sleep_list)
+        
+        logger.info(f"✅ Sleep interval trend analysis completed for user {user_id}: {len(interval_list)} intervals from event {latest_event_id}")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ Error analyzing sleep interval trend: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/trends/sleep-event', methods=['GET'])
+def get_sleep_event_trend():
+    """Get aggregated sleep event trend"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id or not validate_user_id(user_id):
+            return jsonify({'error': 'Valid user_id parameter required'}), 400
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Get aggregated sleep events using the view
+                cursor.execute("""
+                    SELECT event_start, avg_rmssd
+                    FROM aggregated_sleep_events 
+                    WHERE user_id = %s AND avg_rmssd IS NOT NULL
+                    ORDER BY event_start
+                """, (user_id,))
+                
+                events = cursor.fetchall()
+        finally:
+            return_db_connection(conn)
+        
+        # Convert to list of dicts for analyzer
+        event_list = [dict(event) for event in events]
+        
+        # Analyze trend
+        result = trend_analyzer.analyze_sleep_event_trend(event_list)
+        
+        logger.info(f"✅ Sleep event trend analysis completed for user {user_id}: {len(event_list)} events")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ Error analyzing sleep event trend: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
 # =====================================================
