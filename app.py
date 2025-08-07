@@ -471,6 +471,78 @@ def get_sleep_event_trend():
         return jsonify({'error': 'Internal server error'}), 500
 
 # =====================================================
+# TEST ENDPOINTS (ISOLATED FOR DEBUGGING)
+# =====================================================
+
+@app.route('/api/v1/test/sleep-interval', methods=['GET'])
+def get_test_sleep_interval_trend():
+    """Test endpoint for sleep intervals with timestamp precision (1-second accuracy)"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id or not validate_user_id(user_id):
+            return jsonify({'error': 'Valid user_id parameter required'}), 400
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Get latest sleep event_id
+                cursor.execute("""
+                    SELECT MAX(event_id) as latest_event_id
+                    FROM sessions 
+                    WHERE user_id = %s AND tag = 'sleep' AND event_id > 0
+                      AND status = 'completed'
+                """, (user_id,))
+                
+                result = cursor.fetchone()
+                latest_event_id = result['latest_event_id'] if result else None
+                
+                if not latest_event_id:
+                    return jsonify({'raw': [], 'message': 'No sleep events found'})
+                
+                # Get all intervals from latest sleep event with full timestamp precision
+                cursor.execute("""
+                    SELECT recorded_at, rmssd
+                    FROM sessions 
+                    WHERE user_id = %s AND tag = 'sleep' AND event_id = %s
+                      AND status = 'completed' AND rmssd IS NOT NULL
+                    ORDER BY recorded_at
+                """, (user_id, latest_event_id))
+                
+                sessions = cursor.fetchall()
+        finally:
+            return_db_connection(conn)
+        
+        if not sessions:
+            return jsonify({'raw': [], 'message': 'No sleep intervals found'})
+        
+        # Convert to list with full timestamp precision (not just date)
+        session_list = []
+        for session in sessions:
+            # Use full ISO timestamp instead of just date
+            timestamp = session['recorded_at']
+            if isinstance(timestamp, str):
+                # Already ISO format
+                iso_timestamp = timestamp
+            else:
+                # Convert datetime to ISO format with microseconds
+                iso_timestamp = timestamp.isoformat()
+            
+            session_list.append({
+                'recorded_at': iso_timestamp,
+                'rmssd': float(session['rmssd']) if session['rmssd'] is not None else None
+            })
+        
+        # Analyze with test-specific logic
+        result = trend_analyzer.analyze_test_sleep_interval(session_list)
+        
+        logger.info(f"✅ Test sleep interval analysis completed for user {user_id}: {len(session_list)} intervals")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ Error in test sleep interval analysis: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# =====================================================
 # ERROR HANDLERS
 # =====================================================
 
