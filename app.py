@@ -13,6 +13,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Optional, Union
 from uuid import UUID
 
