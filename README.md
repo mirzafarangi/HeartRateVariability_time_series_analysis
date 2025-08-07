@@ -1,253 +1,282 @@
-# HRV Brain API & Database - Production System v5.0.0
-**Complete Backend Implementation for HRV Analysis Platform**
+# HRV Brain System - Final Blueprint
 
-> **🎯 BLUEPRINT STATUS**: This README serves as the canonical deployment guide for the entire backend system. Follow these instructions for guaranteed successful deployment.
+**Version:** 7.0.0 FINAL CLEAN BLUEPRINT  
+**Status:** Production Ready  
+**Last Updated:** August 2025
 
-**Version:** 5.0.0 FINAL  
-**Architecture:** Railway + Supabase PostgreSQL + iOS Swift SDK  
-**Language:** Python 3.11 + NumPy + Flask  
-**Status:** ✅ Production Ready + iOS Integrated  
-**API URL:** https://hrv-brain-api-production.up.railway.app  
-**Database:** Supabase PostgreSQL with Transaction Pooler  
+This document serves as the **single, authoritative blueprint** for the complete HRV Brain system. All development, deployment, and maintenance must reference only this document.
 
-## 🏗️ **SYSTEM ARCHITECTURE**
+## 📂 Repository Structure
 
-### **Core Components**
-- **Flask API**: RESTful endpoints for session management and HRV processing
-- **PostgreSQL Database**: Supabase-hosted with Row Level Security
-- **HRV Engine**: NumPy-based calculations for 9 physiological metrics
-- **Authentication**: Supabase Auth integration
-- **Deployment**: Railway with auto-scaling and CI/CD
+- **API Repository:** [hrv-brain-api](https://github.com/mirzafarangi/api_hrv) (Branch: `fresh_api`)
+- **iOS Repository:** [hrv-brain-ios](https://github.com/mirzafarangi/ios_hrv) (Branch: `fresh_ios`)
+- **Production API:** https://hrv-brain-api-production.up.railway.app
+- **Database:** PostgreSQL on Supabase with Row Level Security
 
-### **Key Features**
-- **9 HRV Metrics**: RMSSD, SDNN, pNN50, CV_RR, DFA α1, SD2/SD1, Mean HR/RR, Count RR
-- **Real-time Processing**: Async session processing with status tracking
-- **User Isolation**: Multi-tenant architecture with secure data separation
-- **iOS Integration**: Direct PostgREST client support for mobile apps
-- **Production Ready**: Health monitoring, error handling, logging
-- **Scalable**: Auto-scaling deployment with database connection pooling
-**API URL:** https://hrv-brain-api-production.up.railway.app  
-**Database:** Supabase PostgreSQL (Transaction Pooler, IPv4-compatible)  
+## 🎯 System Overview
 
-## Overview
+HRV Brain is a comprehensive heart rate variability analysis system consisting of:
+- **iOS App:** SwiftUI-based mobile application for HRV session recording and analysis
+- **API Backend:** Python Flask API for session processing and trends analysis
+- **Database:** PostgreSQL with unified schema for all HRV data and user management
+- **Trends Analysis:** Three distinct analysis modes for different HRV insights
 
-The HRV Brain API is a scientific computing platform for Heart Rate Variability (HRV) analysis, implementing a unified data schema across iOS applications, REST API endpoints, and PostgreSQL database storage. The system processes RR interval data from cardiac sensors and computes nine established HRV metrics using pure NumPy implementations.
+## 📊 Trends Analysis - Three Core Scenarios
 
-## Architecture
+### 1. Rest Trend Analysis
+**Purpose:** Track individual rest session HRV metrics over time  
+**Data Source:** All sessions with `tag = 'rest'` and `event_id = 0`  
+**Visualization:** Individual data points (RMSSD, SDNN) plotted chronologically  
+**Use Case:** Monitor baseline HRV recovery and daily variations  
 
+### 2. Sleep Event Trend Analysis
+**Purpose:** Analyze intervals within the most recent sleep event  
+**Data Source:** Sessions with `tag = 'sleep'` and `event_id = MAX(event_id)`  
+**Visualization:** Sleep intervals (sleep_interval_1, sleep_interval_2, etc.) from latest sleep event  
+**Use Case:** Detailed analysis of sleep quality and HRV patterns within a single sleep session  
+
+### 3. Sleep Baseline Trend Analysis
+**Purpose:** Track aggregated sleep event performance over time  
+**Data Source:** All sleep events grouped by `event_id`, aggregated per event  
+**Visualization:** Each point represents averaged HRV metrics for an entire sleep event  
+**Use Case:** Long-term sleep quality trends and event-to-event comparisons  
+
+### Event ID Logic
+- **`event_id = 0`:** No grouping (rest, experiment sessions, breath workouts)
+- **`event_id > 0`:** Grouped sessions (sleep intervals within the same sleep event)
+
+## 🗄️ Database Schema
+
+### Core Tables
+
+#### `public.profiles`
+Extends Supabase auth.users with HRV-specific profile data.
+
+```sql
+CREATE TABLE public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT,
+    full_name TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 ```
-iOS Application → Railway API (Python/Flask) → Supabase PostgreSQL
-                 (HRV Calculations)           (Data Persistence + RLS)
+
+#### `public.sessions`
+Unified table storing both raw RR intervals and processed HRV metrics.
+
+```sql
+CREATE TABLE public.sessions (
+    -- Core identifiers
+    session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    
+    -- Session metadata
+    tag VARCHAR(50) NOT NULL,           -- rest, sleep, experiment_*, breath_workout
+    subtag VARCHAR(100) NOT NULL,       -- rest_single, sleep_interval_1, etc.
+    event_id INTEGER NOT NULL DEFAULT 0, -- 0 = no grouping, >0 = grouped
+    
+    -- Timing
+    duration_minutes INTEGER NOT NULL,
+    recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    
+    -- Raw data
+    rr_intervals DECIMAL[] NOT NULL,    -- Array of RR intervals in milliseconds
+    rr_count INTEGER NOT NULL,
+    
+    -- Processing status
+    status VARCHAR(20) DEFAULT 'uploaded' CHECK (status IN ('uploaded', 'processing', 'completed', 'failed')),
+    processed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- HRV Metrics (9 individual columns)
+    mean_hr NUMERIC(6,2),      -- Average heart rate (BPM)
+    mean_rr NUMERIC(8,2),      -- Average RR interval (ms)
+    count_rr INTEGER,          -- Count of RR intervals
+    rmssd NUMERIC(8,2),        -- Root Mean Square of Successive Differences (ms)
+    sdnn NUMERIC(8,2),         -- Standard Deviation of NN intervals (ms)
+    pnn50 NUMERIC(5,2),        -- Percentage of successive RR intervals > 50ms (%)
+    cv_rr NUMERIC(5,2),        -- Coefficient of Variation of RR intervals (%)
+    defa NUMERIC(8,4),         -- Detrended Fluctuation Analysis Alpha1
+    sd2_sd1 NUMERIC(8,4)       -- Poincaré plot SD2/SD1 ratio
+);
 ```
 
-**Design Principles:**
-- **Single Source of Truth**: Unified schema across all components
-- **Scientific Accuracy**: Pure NumPy implementations of established HRV metrics
-- **Data Integrity**: PostgreSQL with Row Level Security (RLS)
-- **Scalability**: Connection pooling and cloud-native deployment
+### Canonical Tag System
+- **rest** → `rest_single` (event_id: 0)
+- **sleep** → `sleep_interval_1`, `sleep_interval_2`, etc. (event_id: >0, grouped)
+- **experiment_paired_pre** → `experiment_paired_pre_single` (event_id: 0)
+- **experiment_paired_post** → `experiment_paired_post_single` (event_id: 0)
+- **experiment_duration** → `experiment_duration_single` (event_id: 0)
+- **breath_workout** → `breath_phase_1`, `breath_phase_2`, etc. (event_id: >0, grouped)
 
-## HRV Metrics Implementation
+### Performance Indexes
 
-The system implements nine established HRV metrics following scientific literature:
+```sql
+-- Rest Trend: All sessions with tag='rest'
+CREATE INDEX idx_rest_trend 
+ON sessions(user_id, recorded_at DESC, rmssd, sdnn) WHERE tag = 'rest';
 
-### Time Domain Metrics
-- **RMSSD**: Root Mean Square of Successive Differences
-- **SDNN**: Standard Deviation of NN intervals
-- **pNN50**: Percentage of NN intervals differing by >50ms
-- **CV_RR**: Coefficient of Variation of RR intervals
+-- Sleep Baseline: Aggregation by event_id
+CREATE INDEX idx_sleep_baseline 
+ON sessions(user_id, event_id, rmssd, sdnn) WHERE tag = 'sleep' AND event_id > 0;
 
-### Frequency Domain Metrics
-- **Mean HR**: Average heart rate (beats per minute)
-- **Mean RR**: Average RR interval duration (milliseconds)
+-- Sleep Event: Last event intervals
+CREATE INDEX idx_sleep_event_intervals 
+ON sessions(user_id, event_id, recorded_at, rmssd, sdnn, subtag) WHERE tag = 'sleep' AND event_id > 0;
 
-### Non-linear Metrics
-- **DFA α1**: Detrended Fluctuation Analysis short-term scaling exponent
-- **SD2/SD1**: Poincaré plot ellipse ratio
-- **Count RR**: Total number of valid RR intervals
+-- Helper: Find latest sleep event_id quickly
+CREATE INDEX idx_latest_sleep_event 
+ON sessions(user_id, event_id DESC) WHERE tag = 'sleep' AND event_id > 0;
+```
 
-## Data Schema
+## 🚀 API Architecture
 
-### Session Structure
+**Production URL:** https://hrv-brain-api-production.up.railway.app  
+**Framework:** Flask + PostgreSQL (Supabase)  
+**Deployment:** Railway with auto-deploy from GitHub  
+**Authentication:** Supabase JWT + Row Level Security  
+
+### Core Endpoints
+
+#### Session Management
+```
+POST /api/v1/sessions/upload          - Upload and process HRV session
+GET  /api/v1/sessions/status/{id}     - Get session processing status
+GET  /api/v1/sessions/processed/{uid} - Get user's processed sessions
+GET  /api/v1/sessions/statistics/{uid} - Get user session statistics
+DELETE /api/v1/sessions/{id}          - Delete session
+```
+
+#### Trends Analysis
+```
+POST /api/v1/trends/refresh           - Generate all three trend types
+```
+
+**Request:**
 ```json
 {
-  "session_id": "UUID",
-  "user_id": "UUID", 
-  "tag": "base_tag",
-  "subtag": "semantic_subtag",
-  "event_id": "integer",
-  "duration_minutes": "number",
-  "recorded_at": "ISO8601_timestamp",
-  "rr_intervals": ["array_of_milliseconds"]
+  "user_id": "user-uuid-here"
 }
 ```
 
-### Tag Classification System
-- **rest**: Single resting measurements (event_id: 0)
-- **sleep**: Multi-interval sleep recordings (event_id: >0, grouped)
-- **experiment_paired_pre**: Pre-intervention measurements
-- **experiment_paired_post**: Post-intervention measurements
-- **experiment_duration**: Duration-based experiments
-- **breath_workout**: Breathing exercise sessions
+**Response:**
+```json
+{
+  "rest_trend": {
+    "data": [...],
+    "count": 5,
+    "description": "Individual rest sessions (tag=rest, event_id=0)"
+  },
+  "sleep_event": {
+    "data": [...],
+    "count": 4,
+    "latest_event_id": 1007,
+    "description": "Latest sleep event intervals (tag=sleep, event_id=1007)"
+  },
+  "sleep_baseline": {
+    "data": [...],
+    "count": 7,
+    "description": "Aggregated sleep events (tag=sleep, grouped by event_id)"
+  },
+  "generated_at": "2025-08-07T00:00:00Z",
+  "user_id": "user-uuid-here"
+}
+```
 
-### Event Grouping Logic
-- **Standalone Sessions**: event_id = 0 (rest, experiments, breathing)
-- **Grouped Sessions**: event_id > 0 (sleep intervals share same event_id)
+#### Health & System
+```
+GET  /health                          - Basic health check
+GET  /health/detailed                 - Detailed system status
+```
 
-## API Endpoints
+## 📱 iOS Architecture
 
-### Core Endpoints
-- `POST /api/v1/sessions/upload` - Upload and process HRV session
-- `GET /api/v1/sessions/status/<session_id>` - Get processing status
-- `GET /api/v1/sessions/processed/<user_id>` - Retrieve processed sessions
-- `GET /api/v1/sessions/statistics/<user_id>` - Get session statistics
-- `DELETE /api/v1/sessions/<session_id>` - Delete session data
+**Framework:** SwiftUI + Supabase Swift SDK  
+**Pattern:** MVVM with ObservableObject managers  
+**Authentication:** HTTP-based SupabaseAuthService  
+**Database:** Direct PostgREST queries via Supabase SDK  
 
-### Health Monitoring
-- `GET /health` - Basic health check
-- `GET /health/detailed` - Comprehensive system status
-
-## Database Schema
-
-### Tables
-- **public.profiles**: User profiles extending Supabase auth.users
-- **public.sessions**: Unified raw and processed session data
+### App Structure
+```
+ios_hrv/
+├── Core/                    # Core engine and business logic
+├── Managers/               # Data managers (HRVNetworkManager, TrendsManager)
+├── Models/                 # Data models (Session, TrendsModels, etc.)
+├── UI/
+│   ├── Tabs/              # Main tab views (Record, Sessions, Trends, Profile)
+│   ├── Components/        # Reusable UI components
+│   └── MainContentView.swift
+└── Utilities/             # Helper utilities
+```
 
 ### Key Features
-- **Row Level Security**: User data isolation
-- **Automatic Triggers**: Session counting and timestamp management
-- **Helper Functions**: Statistics aggregation and data retrieval
-- **Performance Indexes**: Optimized queries for user_id and timestamps
+- **Centralized Networking:** HRVNetworkManager with caching and rate limiting
+- **Persistent Cache:** UserDefaults-based plot data storage
+- **Three-Card Trends UI:** Clean, minimal design with SwiftUI Charts
+- **1-Minute Fetch Cooldown:** Rate limiting with proper UX feedback
+- **Direct DB Access:** Sessions tab uses Supabase SDK for real-time data
 
-## Deployment
+## 🔄 Data Flow
 
-### Railway Configuration
-- **Runtime**: Python 3.11.9
-- **Dependencies**: Flask, NumPy, psycopg2-binary, Gunicorn
-- **Health Checks**: Automatic monitoring and restart policies
-- **Environment**: Production-ready with connection pooling
+### Session Recording Flow
+```
+iOS Record Tab → CoreEngine → Supabase Database → Sessions Tab (real-time)
+```
 
-### Environment Variables
+### Trends Analysis Flow
+```
+iOS Trends Tab → HRVNetworkManager → API /trends/refresh → Database Queries → JSON Response → SwiftUI Charts
+```
+
+### Authentication Flow
+```
+iOS Auth → SupabaseAuthService → Supabase Auth → JWT Token → Row Level Security
+```
+
+## 🛠️ Deployment
+
+### Database (Supabase)
+1. Deploy `database_schema.sql` to create all tables, indexes, and policies
+2. Configure Row Level Security for user data isolation
+3. Set up connection pooling for API access
+
+### API (Railway)
+1. Connect GitHub repository (fresh_api branch)
+2. Configure environment variables:
+   ```
+   SUPABASE_DB_HOST=db.xxx.supabase.co
+   SUPABASE_DB_NAME=postgres
+   SUPABASE_DB_USER=postgres
+   SUPABASE_DB_PASSWORD=xxx
+   SUPABASE_DB_PORT=5432
+   FLASK_ENV=production
+   ```
+3. Auto-deploy enabled from GitHub pushes
+
+### iOS App
+1. Configure Supabase credentials in SupabaseConfig.swift
+2. Build and deploy via Xcode/TestFlight
+3. Ensure API URL points to production Railway deployment
+
+## 🧪 Testing
+
+### API Testing
 ```bash
-SUPABASE_DB_HOST=db.zluwfmovtmlijawhelzi.supabase.co
-SUPABASE_DB_NAME=postgres
-SUPABASE_DB_USER=postgres
-SUPABASE_DB_PASSWORD=[secure_password]
-SUPABASE_DB_PORT=5432
-FLASK_ENV=production
+# Health check
+curl https://hrv-brain-api-production.up.railway.app/health
+
+# Trends analysis (requires valid user_id)
+curl -X POST https://hrv-brain-api-production.up.railway.app/api/v1/trends/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "valid-user-uuid"}'
 ```
 
-## File Structure
+### iOS Testing
+1. Record sessions using Record tab
+2. Verify data appears in Sessions tab
+3. Test Trends tab with three-card layout
+4. Validate caching and rate limiting behavior
 
-```
-/api_hrv/
-├── app.py                      # Main Flask application (22KB)
-├── hrv_metrics.py             # NumPy HRV calculations (11KB)
-├── database_config.py         # Connection management
-├── database_schema.sql        # Complete PostgreSQL schema (20KB)
-├── schema.md                  # Golden reference documentation (17KB)
-├── requirements.txt           # Python dependencies
-├── railway.json               # Railway deployment configuration
-├── runtime.txt                # Python version specification
-├── nixpacks.toml             # Build configuration
-├── setup_database_supabase.py # Database initialization
-├── cleanup_database.py       # Maintenance utilities
-└── validate_db_connection.py  # Connection diagnostics
-```
+---
 
-## Scientific Validation
-
-### HRV Metric Accuracy
-- **RMSSD**: Implements standard successive difference calculation
-- **SDNN**: Population standard deviation of RR intervals
-- **DFA α1**: Detrended fluctuation analysis with minimum 50 intervals
-- **Poincaré**: Ellipse fitting for SD1/SD2 calculation
-
-### Data Quality Assurance
-- **Input Validation**: Schema compliance checking
-- **Range Validation**: Physiologically plausible RR intervals
-- **Statistical Validation**: Minimum data requirements for metrics
-- **Error Handling**: Graceful degradation for insufficient data
-
-## Performance Characteristics
-
-### Computational Complexity
-- **Time Domain**: O(n) for n RR intervals
-- **DFA Calculation**: O(n log n) with minimum 50 intervals
-- **Database Operations**: Indexed queries with sub-second response
-
-### Scalability Metrics
-- **Connection Pool**: 1-20 concurrent database connections
-- **Request Handling**: 2 Gunicorn workers with keepalive
-- **Memory Usage**: Optimized NumPy operations for large datasets
-
-## Integration Guidelines
-
-### iOS Application Integration
-1. Implement Supabase authentication
-2. Use unified session schema for uploads
-3. Handle offline queuing for network resilience
-4. Implement proper error handling and retry logic
-
-### API Client Implementation
-- **Authentication**: Supabase JWT tokens
-- **Rate Limiting**: Respect connection pool limits
-- **Error Handling**: Parse structured error responses
-- **Data Validation**: Client-side schema validation recommended
-
-## Maintenance
-
-### Database Maintenance
-- **Backup Strategy**: Supabase automatic backups
-- **Schema Updates**: Version-controlled migrations
-- **Performance Monitoring**: Query optimization and indexing
-- **Data Cleanup**: Automated session lifecycle management
-
-### API Maintenance
-- **Health Monitoring**: Automated health checks
-- **Log Analysis**: Structured logging for debugging
-- **Performance Metrics**: Response time and error rate monitoring
-- **Security Updates**: Regular dependency updates
-
-## Deployment Configuration
-
-### Production Environment
-The system is deployed on Railway with Supabase PostgreSQL backend using the following configuration:
-
-**Database Connection**: Supabase Transaction Pooler (IPv4-compatible)
-- Host: aws-0-eu-central-1.pooler.supabase.com
-- Port: 6543 (Transaction Pooler)
-- Connection pooling: 15 connections per user+database combination
-
-**Application Server**: Gunicorn WSGI with optimized configuration
-- Workers: 2 (Railway Nano compute)
-- Timeout: 120 seconds
-- Worker class: sync
-- Max requests: 1000 per worker
-
-**Critical Dependencies**:
-- PyJWT==2.8.0 (JWT token handling)
-- supabase==2.3.4 (Database client)
-- psycopg2-binary==2.9.9 (PostgreSQL adapter)
-- numpy==1.26.4 (HRV calculations)
-
-### Deployment Lessons
-Key issues resolved during production deployment:
-
-1. **IPv4 Compatibility**: Railway requires Supabase Transaction Pooler instead of Direct Connection
-2. **Gunicorn Arguments**: Invalid `--keepalive` argument removed from railway.json configuration
-3. **Import Dependencies**: Missing PyJWT and supabase packages added to requirements.txt
-4. **Security Management**: API keys rotated and environment variables properly configured
-
-## References
-
-This implementation follows established HRV analysis methodologies from:
-- Task Force of the European Society of Cardiology (1996)
-- Peng et al. (1995) for DFA implementation
-- Brennan et al. (2001) for Poincaré plot analysis
-- Shaffer & Ginsberg (2017) for contemporary HRV guidelines
-
-## Production URL
-
-**API Base URL**: https://hrv-brain-api-production.up.railway.app
-
-**Health Check**: https://hrv-brain-api-production.up.railway.app/health
+**This blueprint represents the complete, production-ready HRV Brain system architecture. All implementation details are available in the respective GitHub repositories.**
