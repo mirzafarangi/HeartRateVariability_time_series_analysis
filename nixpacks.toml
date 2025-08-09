@@ -1,21 +1,26 @@
 [phases.setup]
-nixPkgs = ['python311', 'python311Packages.pip', 'python311Packages.virtualenv']
+nixPkgs = ['python311', 'gcc', 'postgresql']  # Added gcc for psycopg2, postgresql for client libs
 
 [phases.install]
 cmds = [
     'python3 -m venv /opt/venv',
-    '/opt/venv/bin/pip install --upgrade pip',
-    '/opt/venv/bin/pip install -r requirements.txt'
+    '/opt/venv/bin/pip install --upgrade pip setuptools wheel',
+    '/opt/venv/bin/pip install -r requirements.txt',
+    'echo "✅ Dependencies installed"'
 ]
 
 [phases.build]
 cmds = [
-    'echo "Build complete"',
-    'chmod +x start.sh'
+    'echo "🔨 Build phase starting"',
+    'python3 -c "import psycopg2; print(\"✅ psycopg2 imported successfully\")"',
+    'python3 -c "import numpy; print(\"✅ numpy imported successfully\")"',
+    'python3 -c "from app import app; print(\"✅ App imported successfully\")"',
+    'echo "✅ Build complete"'
 ]
 
 [start]
-cmd = './start.sh'
+cmd = 'gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --access-logfile - --error-logfile -'
 
 [variables]
 PATH = '/opt/venv/bin:$PATH'
+PYTHONUNBUFFERED = '1'  # Ensure logs appear immediately

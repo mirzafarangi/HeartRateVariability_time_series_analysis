@@ -1,13 +1,23 @@
-Flask==3.0.0
-Flask-CORS==4.0.0
-psycopg2-binary==2.9.9
-numpy==1.26.4
-python-dotenv==1.0.0
-gunicorn==21.2.0
+# Core Web Framework
+Flask==3.0.3
+Flask-CORS==4.0.1
 Werkzeug==3.0.1
-setuptools==69.5.1
-PyJWT==2.8.0
-supabase==2.3.4
-matplotlib==3.7.2
-seaborn==0.12.2
-pandas==2.1.1
+
+# Database
+psycopg2-binary==2.9.9
+
+# HRV Calculations
+numpy==1.26.4
+
+# Configuration
+python-dotenv==1.0.1
+
+# Production Server
+gunicorn==21.2.0
+
+# Remove these (not used in API v5.3.1):
+# PyJWT==2.8.0         # Not implemented yet
+# supabase==2.3.4      # Using direct PostgreSQL
+# matplotlib==3.7.2    # No plotting in API
+# seaborn==0.12.2      # No visualization
+# pandas==2.1.1        # Not needed
