@@ -1,8 +1,8 @@
 # HRV Brain API Blueprint & Documentation
 
-**Version:** 5.3.1 PRODUCTION  
+**Version:** 5.4.0 PRODUCTION  
 **Database:** v4.1 (Trigger-based event allocation)  
-**Status:** Production Ready  
+**Status:** Production Ready with Session Validation  
 **Last Updated:** 2025-01-09
 
 ## Table of Contents
@@ -36,14 +36,17 @@ graph LR
 - **iOS App**
   - Collects RR intervals from sensors
   - Assigns canonical tags and subtags
-  - Sends sessions to API
+  - Sends only completed sessions (discards partials)
   - For sleep: sends `event_id=0` for auto-allocation
+  - Displays validation reports and DB status in queue UI
 
 - **Backend API (Flask on Railway)**
   - Validates canonical tag/subtag/event_id rules
+  - **NEW:** Validates session duration against RR intervals
   - Calculates 9 HRV metrics per session
   - Writes to Supabase using service role (bypasses RLS)
   - Provides analytics endpoints with plot-ready data
+  - Returns detailed validation reports with each upload
 
 - **Supabase PostgreSQL**
   - Enforces data integrity via constraints
@@ -53,10 +56,10 @@ graph LR
 
 ### Data Flow
 
-1. **Client** → Prepares session with canonical tags
-2. **API** → Validates, calculates metrics, inserts
+1. **Client** → Prepares completed session with canonical tags
+2. **API** → Validates tags, duration, calculates metrics
 3. **Database** → Triggers assign event_id if needed
-4. **Response** → Returns session_id and assigned event_id
+4. **Response** → Returns session_id, event_id, validation report, DB status
 
 ---
 
@@ -175,6 +178,25 @@ Upload an HRV session with canonical tags.
   "status": "success",
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
   "event_id": 0,  // or assigned ID for sleep
+  "db_status": "saved",
+  "validation_report": {
+    "validation_result": {
+      "is_valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    "duration_analysis": {
+      "ios_duration_minutes": 5,
+      "critical_duration_minutes": 5.0,
+      "duration_match": true,
+      "tolerance_seconds": 5
+    },
+    "rr_analysis": {
+      "rr_count": 300,
+      "total_duration_ms": 300000,
+      "average_rr_ms": 1000.0
+    }
+  },
   "metrics": {
     "mean_hr": 58.2,
     "mean_rr": 1030.1,
@@ -195,7 +217,9 @@ Upload an HRV session with canonical tags.
   "status": "duplicate",
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
   "event_id": 42,  // Important for sleep retry safety
-  "message": "Session already exists"
+  "db_status": "duplicate",
+  "message": "Session already exists",
+  "validation_report": null  // Not re-validated on duplicates
 }
 ```
 
@@ -362,16 +386,45 @@ duration_minutes: Integer > 0
 recorded_at:      ISO 8601 with timezone
 rr_intervals:     Non-empty array, values 200-2000ms
 rr_count:         Must match array length (if provided)
+
+# NEW: Duration Validation
+duration_consistency: iOS duration must match RR intervals (±5s tolerance)
+  - Critical duration = sum(rr_intervals) / 60000
+  - Pass if: |ios_duration - critical_duration| <= 5/60 minutes
+  - Fail if: Discrepancy > 5 seconds
 ```
 
 ### Error Responses
 
 | Status | Meaning | Example |
-|--------|---------|---------|
-| 400 | Validation failed | Invalid tag/subtag |
+|--------|---------|---------|  
+| 400 | Validation failed | Invalid tag/subtag, duration mismatch |
 | 409 | Duplicate session | Session ID exists |
 | 422 | HRV calculation failed | Invalid RR data |
 | 500 | Server error | Database connection failed |
+
+### Validation Report Structure
+
+```json
+{
+  "validation_result": {
+    "is_valid": boolean,
+    "errors": ["Duration mismatch: iOS=5min, RR=3min"],
+    "warnings": ["Minor duration discrepancy: 3s"]
+  },
+  "duration_analysis": {
+    "ios_duration_minutes": number,
+    "critical_duration_minutes": number,
+    "duration_match": boolean,
+    "tolerance_seconds": 5
+  },
+  "rr_analysis": {
+    "rr_count": number,
+    "total_duration_ms": number,
+    "average_rr_ms": number
+  }
+}
+```
 
 ### Trigger Error Mapping
 
@@ -426,9 +479,10 @@ PORT=5000  # Railway assigns
 
 ```
 project/
-├── app.py                # API v5.3.1
+├── app.py                # API v5.4.0
 ├── database_config.py    # Connection management
 ├── hrv_metrics.py       # HRV calculations
+├── session_validator.py  # Duration/RR validation module
 ├── .env.railway         # Environment variables
 ├── requirements.txt     # Dependencies
 └── README.md           # This document
@@ -580,6 +634,7 @@ fn_experiment_points(p_user_id, p_metric, p_window, p_protocol_subtag)
 
 ## Version History
 
+- **v5.4.0** (2025-01-09) - Added session validator module, duration/RR validation
 - **v5.3.1** (2025-01-09) - Returns event_id on duplicates, DB v4.1 compatible
 - **v5.3.0** (2025-01-09) - DB v4.0 compatibility, p_window parameters
 - **v5.2.0** (2025-01-08) - Trigger-based allocation support
