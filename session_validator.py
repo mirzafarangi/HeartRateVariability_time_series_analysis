@@ -38,7 +38,7 @@ class SessionValidator:
     
     def _register_default_validators(self):
         """Register default validation modules"""
-        self.validators.append(self._validate_duration_critical)
+        # Duration validation removed - accept whatever iOS sends
         # Future validators can be added here:
         # self.validators.append(self._validate_hrv_quality)
         # self.validators.append(self._validate_artifact_detection)
@@ -61,7 +61,22 @@ class SessionValidator:
         warnings = []
         details = {}
         
-        # Run each validator
+        # Basic session info for reporting (no validation)
+        details['duration_ios_minutes'] = session_data.get('duration_minutes', 0)
+        details['rr_interval_count'] = len(session_data.get('rr_intervals', []))
+        
+        # Calculate actual duration from RR intervals for info only
+        rr_intervals = session_data.get('rr_intervals', [])
+        if rr_intervals:
+            duration_ms = sum(rr_intervals)
+            details['duration_actual_seconds'] = round(duration_ms / 1000.0, 2)
+            details['duration_actual_minutes'] = round(duration_ms / 60000.0, 2)
+        
+        # Add warning for very low RR count (but don't fail)
+        if len(rr_intervals) < 10:
+            warnings.append(f"Low RR interval count ({len(rr_intervals)}). Physiological metrics may be less reliable.")
+        
+        # Run any registered validators (currently none)
         for validator in self.validators:
             result = validator(session_data)
             if not result.is_valid:
@@ -78,96 +93,7 @@ class SessionValidator:
             details=details
         )
     
-    def _validate_duration_critical(self, session_data: Dict) -> ValidationResult:
-        """
-        Validate duration using RR intervals (critical validation)
-        
-        This is the first module of validation:
-        - Calculate actual duration from RR intervals (duration_critical)
-        - Compare with iOS-reported duration
-        - Allow ±5 seconds tolerance
-        """
-        errors = []
-        warnings = []
-        details = {}
-        
-        try:
-            # Get iOS-reported duration in minutes
-            duration_ios_minutes = session_data.get('duration_minutes', 0)
-            duration_ios_seconds = duration_ios_minutes * 60
-            
-            # Get RR intervals
-            rr_intervals = session_data.get('rr_intervals', [])
-            
-            # Basic validation
-            if not rr_intervals:
-                errors.append("No RR intervals provided")
-                details['duration_critical_seconds'] = 0
-                details['duration_ios_seconds'] = duration_ios_seconds
-                return ValidationResult(is_valid=False, errors=errors, details=details)
-            
-            if duration_ios_minutes < 1:
-                errors.append(f"Duration too short: {duration_ios_minutes} minutes (minimum 1 minute required)")
-                details['duration_ios_minutes'] = duration_ios_minutes
-                return ValidationResult(is_valid=False, errors=errors, details=details)
-            
-            # Calculate critical duration from RR intervals
-            # Sum of all RR intervals gives actual recording duration
-            duration_critical_ms = sum(rr_intervals)
-            duration_critical_seconds = duration_critical_ms / 1000.0
-            duration_critical_minutes = duration_critical_seconds / 60.0
-            
-            # Calculate difference
-            duration_diff_seconds = abs(duration_ios_seconds - duration_critical_seconds)
-            
-            # Store details for reporting
-            details['duration_ios_minutes'] = duration_ios_minutes
-            details['duration_ios_seconds'] = duration_ios_seconds
-            details['duration_critical_seconds'] = round(duration_critical_seconds, 2)
-            details['duration_critical_minutes'] = round(duration_critical_minutes, 2)
-            details['duration_difference_seconds'] = round(duration_diff_seconds, 2)
-            details['rr_interval_count'] = len(rr_intervals)
-            
-            # Check tolerance (±5 seconds)
-            TOLERANCE_SECONDS = 5
-            if duration_diff_seconds > TOLERANCE_SECONDS:
-                error_msg = (
-                    f"Duration mismatch: iOS reported {duration_ios_minutes} min "
-                    f"({duration_ios_seconds}s), but RR intervals show "
-                    f"{round(duration_critical_minutes, 1)} min ({round(duration_critical_seconds, 1)}s). "
-                    f"Difference: {round(duration_diff_seconds, 1)}s (tolerance: ±{TOLERANCE_SECONDS}s)"
-                )
-                errors.append(error_msg)
-                
-                # Log for debugging
-                logger.warning(f"Duration validation failed: {error_msg}")
-                logger.debug(f"RR intervals: count={len(rr_intervals)}, "
-                           f"first_10={rr_intervals[:10] if len(rr_intervals) > 10 else rr_intervals}")
-            else:
-                # Duration is within tolerance
-                details['validation_status'] = 'PASSED'
-                logger.info(f"Duration validation passed: iOS={duration_ios_minutes}min, "
-                          f"Critical={round(duration_critical_minutes, 2)}min, "
-                          f"Diff={round(duration_diff_seconds, 2)}s")
-            
-            # Add warnings for edge cases
-            if len(rr_intervals) < 10:
-                warnings.append(f"Low RR interval count ({len(rr_intervals)}). HRV metrics may be unreliable.")
-            
-            if duration_critical_minutes < 1:
-                warnings.append(f"Actual recording duration is {round(duration_critical_minutes, 2)} minutes")
-            
-        except Exception as e:
-            logger.error(f"Error in duration validation: {str(e)}")
-            errors.append(f"Duration validation error: {str(e)}")
-        
-        is_valid = len(errors) == 0
-        return ValidationResult(
-            is_valid=is_valid,
-            errors=errors,
-            warnings=warnings,
-            details=details
-        )
+
     
     def get_validation_report(self, session_data: Dict) -> Dict:
         """

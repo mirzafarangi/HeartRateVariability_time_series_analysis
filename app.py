@@ -933,11 +933,26 @@ def upload_session():
             
         except Exception as e:
             logger.error(f"HRV calculation failed: {str(e)}")
-            response = {'error': f'HRV calculation failed: {str(e)}'}
+            # Provide detailed error response for iOS to display
+            error_response = {
+                'error': 'HRV calculation failed',
+                'message': f'Unable to calculate physiological metrics: {str(e)}',
+                'validation_report': {
+                    'is_valid': False,
+                    'errors': [f'Physiological metrics calculation error: {str(e)}'],
+                    'warnings': [],
+                    'details': {
+                        'session_id': session_id,
+                        'rr_interval_count': len(rr_intervals),
+                        'duration_minutes': duration_minutes,
+                        'error_type': 'hrv_calculation_error'
+                    }
+                }
+            }
             # Store HRV errors for idempotency
             if idempotency_key and user_id:
-                store_idempotency(user_id, idempotency_key, response)
-            return jsonify(response), 500
+                store_idempotency(user_id, idempotency_key, error_response)
+            return jsonify(error_response), 400
         
         # Insert into database
         conn = None
