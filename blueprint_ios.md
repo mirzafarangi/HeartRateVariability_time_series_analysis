@@ -1,62 +1,164 @@
-# Blueprint: iOS HRV Brain App - Record & Sessions Tabs
+# Blueprint: iOS HRV Brain App Architecture
 
 ## Overview
-This document defines the canonical architecture and data flows for the iOS HRV Brain app's Record and Sessions tabs. These two tabs form the core user experience for HRV recording, processing, and session management.
+This document defines the complete architecture, authentication system, and data flows for the iOS HRV Brain app. It covers the core components including authentication management, network layer, recording system, and session management across all tabs.
 
 ---
 
-## 1. Record Tab
+## 1. System Architecture
 
-### 1.1 Purpose
+### 1.1 Core Components
+
+```
+ios_hrv/
+├── Core/                       # Core system services
+│   ├── SupabaseAuthService    # Unified authentication & token management
+│   ├── CoreEngine             # Master orchestrator
+│   ├── APIClient              # Network layer for API communication
+│   ├── RecordingManager       # HRV recording logic
+│   ├── QueueManager           # Upload queue management
+│   ├── BLEManager             # Bluetooth/sensor connectivity
+│   └── DatabaseSessionManager # Local session persistence
+├── Models/                     # Data models
+│   ├── UnifiedModels          # Core data structures
+│   └── Enums                  # App-wide enumerations
+├── UI/                        # User interface
+│   ├── Tabs/                  # Main tab views
+│   └── Components/            # Reusable UI components
+└── Managers/                  # (Legacy - being phased out)
+    └── HRVNetworkManager
+```
+
+### 1.2 Authentication System
+
+#### SupabaseAuthService (Singleton)
+The unified authentication service manages all auth-related operations:
+
+```swift
+@MainActor
+class SupabaseAuthService: ObservableObject {
+    static let shared = SupabaseAuthService()
+    
+    // Published state
+    @Published var isAuthenticated: Bool
+    @Published var currentUser: SupabaseUser?
+    @Published var userId: String?
+    @Published var userEmail: String?
+    @Published var errorMessage: String?
+    @Published var successMessage: String?
+    
+    // Core features:
+    // - JWT token storage (access + refresh tokens)
+    // - Automatic token refresh every 30 seconds
+    // - Session persistence across app launches
+    // - Emergency re-authentication fallback
+    // - Supabase API integration
+}
+```
+
+#### Authentication Flow
+
+```
+1. App Launch
+   └── SupabaseAuthService.loadStoredSession()
+       ├── Load tokens from Keychain
+       ├── Validate JWT expiration
+       └── Start token monitoring timer
+
+2. Sign In
+   └── SupabaseAuthService.signIn(email, password)
+       ├── POST to Supabase /auth/v1/token
+       ├── Store access_token + refresh_token
+       ├── Store user credentials (emergency fallback)
+       └── Update published state
+
+3. Token Refresh (Automatic)
+   └── Timer triggers every 30 seconds
+       ├── Check if token expires within 5 minutes
+       ├── Use refresh_token to get new access_token
+       ├── If refresh fails → try stored credentials
+       └── Update stored tokens
+
+4. API Calls
+   └── APIClient.addAuthHeaders()
+       └── Get current access_token from SupabaseAuthService
+           └── Add "Bearer {token}" to Authorization header
+```
+
+#### Token Storage
+
+```swift
+Keychain keys:
+- "supabase_access_token"    // JWT access token
+- "supabase_refresh_token"   // JWT refresh token  
+- "supabase_user_id"         // User UUID
+- "supabase_user_email"      // User email
+- "supabase_stored_password" // Emergency fallback
+```
+
+### 1.3 Network Management
+
+#### APIClient
+Centralized API communication layer:
+
+```swift
+class APIClient {
+    private let baseURL = "https://hrv-brain-api-production.up.railway.app"
+    
+    // Endpoints
+    func uploadSession(_ session: RawSession) async throws -> SessionUploadResponse
+    func getSessionStatus(_ sessionId: String) async throws -> SessionStatusResponse
+    func getProcessedSessions(userId: String) async throws -> [ProcessedSession]
+    func getSessionStatistics(userId: String) async throws -> SessionStatistics
+    func getHealthStatus() async throws -> HealthResponse
+    
+    // All requests automatically include Supabase JWT token
+    private func addAuthHeaders(to request: inout URLRequest) async {
+        if let token = await SupabaseAuthService.shared.getCurrentAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
+}
+```
+
+#### Network Flow
+
+```
+User Action → CoreEngine → APIClient → Railway API → Supabase DB
+                  ↑            ↓
+           SupabaseAuthService provides JWT token
+```
+
+---
+
+## 2. Record Tab
+
+### 2.1 Purpose
 The Record tab is the primary interface for capturing HRV data from the Apple Watch. It manages the complete recording lifecycle from session initiation to queue management and API upload.
 
-### 1.2 Architecture Components
+### 2.2 Architecture Components
 
 ```
 RecordTabView
-    ├── RecordingCard (Session Configuration)
-    ├── ConfigCard (Active Recording Display)
-    ├── QueueCard (Upload Management)
-    └── CoreEngine (Recording Engine)
+    ├── SensorCard (Sensor/Auth status, connectivity)
+    ├── ConfigCard (Recording mode/config state + status)
+    ├── RecordingCard (Controls: start/stop, duration, tag)
+    ├── QueueCard (Upload queue, API validation & DB status)
+    └── CoreEngine (EnvironmentObject – recording engine/state)
 ```
 
-### 1.3 Recording Flow
+### 2.3 Recording Flow
 
 #### Step 1: Session Configuration
 ```swift
-// User selects a canonical tag in RecordingCard
-enum SessionTag: String {
-    case wake_check = "wake_check"
-    case pre_sleep = "pre_sleep"
-    case sleep = "sleep"
-    case experiment = "experiment"
-}
-
-// Subtag is auto-assigned based on tag
-func getSubtag(for tag: SessionTag, interval: Int = 1) -> String {
-    switch tag {
-    case .wake_check:
-        return "wake_check_single"
-    case .pre_sleep:
-        return "pre_sleep_single"
-    case .sleep:
-        return "sleep_interval_\(interval)"
-    case .experiment:
-        return "experiment_protocol_breathing"
-    }
-}
+// User selects canonical tag/duration in UI (RecordingCard/ConfigCard)
+// Subtag is auto-assigned per canonical rules (sleep uses interval numbering)
 ```
 
 #### Step 2: Recording Initiation
 ```swift
 // User taps "Start Recording"
-RecordingManager.startRecording(
-    tag: selectedTag,
-    subtag: autoAssignedSubtag,
-    eventId: 0  // Always 0 for client
-)
-    ↓
-CoreEngine.startWatchRecording()
+CoreEngine.startRecordingWithCurrentMode()
     ↓
 Apple Watch HRV Capture
 ```
@@ -71,7 +173,7 @@ struct LiveHRVData {
 }
 
 // CoreEngine processes incoming data
-CoreEngine.processHRVData(liveData)
+// ConfigCard presents live status/telemetry
     ↓
 ConfigCard displays:
     - Elapsed time
@@ -83,9 +185,9 @@ ConfigCard displays:
 #### Step 4: Recording Completion
 ```swift
 // User taps "Stop Recording" or auto-stop triggers
-RecordingManager.stopRecording()
+// CoreEngine finalizes the session
     ↓
-Create QueueCard:
+Create queue item:
 {
     "session_id": "uuid_without_hyphens",
     "user_id": "authenticated_user_id",
@@ -97,10 +199,10 @@ Create QueueCard:
     "rr_intervals": [800, 820, 810, ...]
 }
     ↓
-QueueManager.addToQueue(queueCard)
+QueueManager.addSession(session)
 ```
 
-### 1.4 Queue Management
+### 2.4 Queue Management
 
 #### Queue States
 ```swift
@@ -112,18 +214,26 @@ enum QueueStatus {
 }
 ```
 
-#### Upload Process
+#### Upload Process + Validation/DB status
 ```swift
 QueueManager.processQueue()
     ↓
-For each pending QueueCard:
-    1. APIClient.uploadSession(queueCard)
-    2. POST to /api/v1/sessions/upload
-    3. Handle response:
-        - Success: Mark completed, store event_id if sleep
-        - Failure: Retry with exponential backoff
-    4. Update QueueCard status
+For each pending queue item:
+  1. APIClient.uploadSession(session)
+  2. POST /api/v1/sessions/upload
+  3. Response fields:
+     - validation_report → mapped to ValidationReport (Codable)
+     - db_status (e.g., "inserted", "skipped", "error")
+  4. Mark status: .completed or .failed (with retry policy)
+  5. For sleep: if API returns new event_id, reuse the same event_id for subsequent intervals that night
 ```
+
+QueueCard UI shows, per item:
+- Status: Valid/Invalid from `validationReport.validationResult.isValid`
+- Durations: iOS vs RR, match flag, tolerance
+- RR analysis: count, avg RR
+- Errors/Warnings lists
+- Endpoint: API base URL (via `APIClient().baseURLString`) and route
 
 ### 1.5 Multi-Interval Sleep Recording
 
@@ -134,51 +244,45 @@ For sleep sessions with multiple intervals:
 sleep_interval_1: event_id = 0 → API returns event_id = 123
 
 // Subsequent intervals (same night)
-sleep_interval_2: event_id = 123 (use returned ID)
-sleep_interval_3: event_id = 123 (use returned ID)
+sleep_interval_2: event_id = 123 (reuse)
+sleep_interval_3: event_id = 123 (reuse)
 
 // New night
 sleep_interval_1: event_id = 0 → API returns event_id = 124
 ```
 
-### 1.6 UI Components
+### 1.6 UI Components (current)
 
 #### RecordingCard
-- Tag selector (4 canonical options)
-- Duration selector (5, 10, 15 minutes)
-- Start Recording button
-- Auto-assigns subtag based on tag
+- Canonical tag/duration selectors
+- Start/Stop controls depending on state
+- Auto subtag per tag; sleep uses interval numbering
 
 #### ConfigCard (During Recording)
-- Live elapsed time
-- Current heart rate
-- RR interval count
-- Stop Recording button
-- Visual recording indicator
+- Live elapsed time/progress
+- Current heart rate / RR count
+- Recording mode/status indicator
+- Stop control
 
 #### QueueCard
-- List of pending uploads
-- Upload status for each session
-- Retry failed uploads
-- Clear completed items
+- Pending/Uploading/Completed/Failed items
+- Validation report + DB status display
+- Retry failed uploads / Clear completed
+- Copy full report (includes endpoint details)
 
 ---
 
-## 2. Sessions Tab
+## 3. Sessions Tab
 
-### 2.1 Purpose
+### 3.1 Purpose
 The Sessions tab provides comprehensive session management with direct database access for real-time updates, session browsing, and deletion capabilities.
 
-### 2.2 Architecture Components
+### 3.2 Architecture Components
 
 ```
 SessionsTabView
-    ├── DebugDiagnosticsCard (DB Connection Status)
-    ├── SessionsByTagCard (Accordion View)
-    │   ├── Wake Check Sessions
-    │   ├── Pre-Sleep Sessions
-    │   ├── Sleep Sessions
-    │   └── Experiment Sessions
+    ├── SessionDiagnosticsCard (DB/Counts/Debug info)
+    ├── SessionAccordionView (Expandable sessions-by-tag)
     └── SessionDataCard (Latest Session Details)
 ```
 
@@ -197,7 +301,7 @@ Transform to DatabaseSession models
 Display in UI
 ```
 
-### 2.4 Session Display
+### 3.4 Session Display
 
 #### Session Row Format
 Each session displays:
@@ -261,15 +365,14 @@ func deleteSession(sessionId: String) async -> Result<Void, Error> {
 }
 ```
 
-### 2.6 UI Components
+### 2.6 UI Components (current)
 
-#### DebugDiagnosticsCard
+#### SessionDiagnosticsCard
 ```
 ┌─────────────────────────────────────────────┐
 │ 🔧 Database Diagnostics                     │
-│ Status: Connected ✓                         │
-│ Sessions: 28 total                          │
-│ Last sync: 2 seconds ago                    │
+│ Total Sessions: N                           │
+│ Status/Debug: dynamic info                  │
 │ [View Debug Logs]                           │
 └─────────────────────────────────────────────┘
 ```
@@ -424,7 +527,96 @@ ELSE:
 
 ---
 
-## 5. Error Handling
+## 6. Core System Components
+
+### 6.1 CoreEngine (Master Orchestrator)
+
+```swift
+@MainActor
+class CoreEngine: ObservableObject {
+    static let shared = CoreEngine()
+    
+    // Managers
+    private let authService: SupabaseAuthService
+    private let bleManager: BLEManager
+    private let recordingManager: RecordingManager
+    private let queueManager: QueueManager
+    private let apiClient: APIClient
+    
+    // Published State
+    @Published var coreState: CoreState
+    @Published var isAuthenticated: Bool
+    @Published var userId: String?
+    
+    // Coordinates all app operations
+    func startRecordingWithCurrentMode()
+    func stopRecording()
+    func processQueue()
+    func loadSessions()
+}
+```
+
+### 6.2 RecordingManager
+
+Handles all recording logic:
+
+```swift
+class RecordingManager: ObservableObject {
+    @Published var isRecording: Bool
+    @Published var currentSession: RecordingSession?
+    @Published var recordingMode: RecordingMode
+    
+    // Recording modes
+    enum RecordingMode {
+        case single(tag: SessionTag, duration: Int)
+        case autoRecording(intervals: [Int], currentInterval: Int)
+    }
+    
+    // Core functions
+    func startRecording(tag: SessionTag, subtag: String, duration: Int)
+    func stopRecording()
+    func processRRIntervals(_ intervals: [Double])
+}
+```
+
+### 6.3 QueueManager
+
+Manages upload queue:
+
+```swift
+class QueueManager: ObservableObject {
+    @Published var queueItems: [QueueItem]
+    @Published var isProcessing: Bool
+    
+    // Queue operations
+    func addSession(_ session: RawSession)
+    func processQueue() async
+    func retryFailed()
+    func clearCompleted()
+}
+```
+
+### 6.4 BLEManager
+
+Bluetooth and sensor connectivity:
+
+```swift
+class BLEManager: ObservableObject {
+    @Published var connectionState: ConnectionState
+    @Published var sensorInfo: SensorInfo?
+    @Published var heartRate: Double?
+    @Published var rrIntervals: [Double]
+    
+    func startScanning()
+    func connect(to device: BLEDevice)
+    func startHRVCapture()
+    func stopHRVCapture()
+}
+```
+
+---
+
+## 7. Error Handling
 
 ### 5.1 Recording Errors
 ```swift
