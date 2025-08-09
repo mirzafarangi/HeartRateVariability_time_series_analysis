@@ -17,7 +17,6 @@ Key changes in v5.3.1:
 IMPORTANT NOTES:
 - Idempotency is in-memory only (use Redis for production deployments)
 - Service role DB credentials required (bypasses RLS in Supabase)
-- For multi-device safety: clients should send explicit event_id for sleep_interval_2+
 """
 
 import os
@@ -25,11 +24,13 @@ import re
 import json
 import logging
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from decimal import Decimal
+import uuid
+import hashlib
+import json
 from typing import Dict, List, Optional, Tuple, Any
-from collections import defaultdict
-import time
-
+from session_validator import session_validator
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
@@ -895,6 +896,22 @@ def upload_session():
                 store_idempotency(data['user_id'], idempotency_key, response)
             return jsonify(response), 400
         
+        # NEW: Run modular session validator
+        validation_report = session_validator.get_validation_report(validated)
+        validation_result = validation_report['validation_result']
+        
+        if not validation_result['is_valid']:
+            logger.warning(f"Session validation failed: {validation_result['errors']}")
+            response = {
+                'error': 'Session validation failed',
+                'validation_report': validation_report,
+                'message': validation_result['errors'][0] if validation_result['errors'] else 'Invalid session data'
+            }
+            # Store validation errors for idempotency
+            if idempotency_key and data.get('user_id'):
+                store_idempotency(data['user_id'], idempotency_key, response)
+            return jsonify(response), 400
+        
         # Extract validated fields
         user_id = validated['user_id']
         session_id = validated['session_id']
@@ -985,10 +1002,12 @@ def upload_session():
                     logger.info(f"Session {session_id} inserted successfully with event_id={assigned_event_id}")
                     
                     response = {
-                        'status': 'success',
-                        'session_id': session_id,
-                        'event_id': assigned_event_id,  # CRITICAL for multi-device safety
-                        'metrics': metrics
+                        'session_id': result['session_id'],
+                        'event_id': result['event_id'],  # Return for multi-device safety
+                        'message': 'Session uploaded successfully',
+                        'metrics': metrics,
+                        'validation_report': validation_report,  # Include validation details
+                        'db_status': 'saved'  # Confirm DB save status
                     }
                     status_code = 201
                 
