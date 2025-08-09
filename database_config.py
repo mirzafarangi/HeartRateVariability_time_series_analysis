@@ -1,5 +1,5 @@
 """
-Database Configuration for HRV App
+Database Configuration for Lumenis App
 Version: 3.3.4 Final
 Source: schema.md (Golden Reference)
 """

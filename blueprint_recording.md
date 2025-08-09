@@ -1,4 +1,4 @@
-**HRV Project — Canonical Tagging, Recording Flow, and Database Integration Specification**
+**Lumenis Project — Canonical Tagging, Recording Flow, and Database Integration Specification**
 
 **Version:** 1.0
 
@@ -156,7 +156,7 @@ SELECT fn_allocate_sleep_event_id(<user_id>);
 ### **4.1 Relevant Tables**
 
 - **profiles** — minimal user profile, linked to auth.users.
-- **sessions** — primary store for all HRV session data.
+- **sessions** — primary store for all Lumenis session data.
 
 ---
 

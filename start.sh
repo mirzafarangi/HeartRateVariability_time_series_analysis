@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting HRV Brain API v5.3.1"
+echo "🚀 Starting Lumenis API v5.3.1"
 echo "📊 Database: $SUPABASE_DB_HOST"
 echo "🔧 Workers: 2, Threads: 4"
 echo "⏱️ Timeout: 120s"

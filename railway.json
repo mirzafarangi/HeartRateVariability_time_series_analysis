@@ -5,7 +5,7 @@
     "buildCommand": "echo 'Using nixpacks.toml for build'"
   },
   "deploy": {
-    "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --keep-alive 5 --access-logfile - --error-logfile - --log-level info",
+    "startCommand": "bash start.sh",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
@@ -15,7 +15,6 @@
   "environments": {
     "production": {
       "deploy": {
-        "replicas": 1,
         "restartPolicyType": "ALWAYS"
       }
     }

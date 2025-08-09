@@ -1,7 +1,7 @@
-# Blueprint: iOS HRV Brain App Architecture
+# Blueprint: iOS Lumenis App Architecture
 
 ## Overview
-This document defines the complete architecture, authentication system, and data flows for the iOS HRV Brain app. It covers the core components including authentication management, network layer, recording system, and session management across all tabs.
+This document defines the architecture, authentication system, and data flows for the iOS Lumenis app. It covers the core components including authentication management, network layer, recording system, and session management across all tabs.
 
 ---
 
@@ -15,7 +15,7 @@ ios_hrv/
 │   ├── SupabaseAuthService    # Unified authentication & token management
 │   ├── CoreEngine             # Master orchestrator
 │   ├── APIClient              # Network layer for API communication
-│   ├── RecordingManager       # HRV recording logic
+│   ├── RecordingManager       # Physiological recording logic
 │   ├── QueueManager           # Upload queue management
 │   ├── BLEManager             # Bluetooth/sensor connectivity
 │   └── DatabaseSessionManager # Local session persistence
@@ -26,7 +26,7 @@ ios_hrv/
 │   ├── Tabs/                  # Main tab views
 │   └── Components/            # Reusable UI components
 └── Managers/                  # (Legacy - being phased out)
-    └── HRVNetworkManager
+    └── LumenisNetworkManager
 ```
 
 ### 1.2 Authentication System
@@ -134,7 +134,7 @@ User Action → CoreEngine → APIClient → Railway API → Supabase DB
 ## 2. Record Tab
 
 ### 2.1 Purpose
-The Record tab is the primary interface for capturing HRV data from the Apple Watch. It manages the complete recording lifecycle from session initiation to queue management and API upload.
+The Record tab is the primary interface for capturing physiological data from the Apple Watch. It manages the complete recording lifecycle from session initiation to queue management and API upload.
 
 ### 2.2 Architecture Components
 
@@ -160,13 +160,13 @@ RecordTabView
 // User taps "Start Recording"
 CoreEngine.startRecordingWithCurrentMode()
     ↓
-Apple Watch HRV Capture
+Apple Watch Physiological Capture
 ```
 
 #### Step 3: Data Collection
 ```swift
 // Real-time RR intervals from Apple Watch
-struct LiveHRVData {
+struct LivePhysiologicalData {
     let rrIntervals: [Double]  // milliseconds
     let timestamp: Date
     let heartRate: Double
@@ -388,7 +388,7 @@ func deleteSession(sessionId: String) async -> Result<Void, Error> {
 │ Duration: 5 minutes                         │
 │ Recorded: Aug 9, 2025 10:30 AM             │
 │                                              │
-│ HRV Metrics:                                │
+│ Physiological Metrics:                      │
 │ • Mean HR: 72 BPM                          │
 │ • RMSSD: 42.5 ms                           │
 │ • SDNN: 38.2 ms                            │
@@ -408,7 +408,7 @@ func deleteSession(sessionId: String) async -> Result<Void, Error> {
 1. USER ACTION: Start wake_check recording
    RecordTabView → RecordingCard
    
-2. RECORDING: Capture HRV data for 5 minutes
+2. RECORDING: Capture physiological data for 5 minutes
    CoreEngine → Apple Watch → RR Intervals
    
 3. COMPLETION: Create queue entry
@@ -426,7 +426,7 @@ func deleteSession(sessionId: String) async -> Result<Void, Error> {
    
 5. API PROCESSING:
    - Validate canonical tag/subtag
-   - Calculate HRV metrics
+   - Calculate physiological metrics
    - Insert into database
    - Return success with event_id
    
@@ -609,8 +609,8 @@ class BLEManager: ObservableObject {
     
     func startScanning()
     func connect(to device: BLEDevice)
-    func startHRVCapture()
-    func stopHRVCapture()
+    func startPhysiologicalCapture()
+    func stopPhysiologicalCapture()
 }
 ```
 
@@ -731,10 +731,10 @@ SupabaseAuthService.authenticate()
 
 The Record and Sessions tabs work in perfect harmony:
 
-- **Record Tab**: Captures HRV data, manages queue, uploads to API
+- **Record Tab**: Captures physiological data, manages queue, uploads to API
 - **Sessions Tab**: Displays all sessions, provides management, direct DB access
 - **Data Flow**: Record → Queue → API → Database → Sessions Display
 - **Canonical Compliance**: Enforced at every layer (UI, API, DB)
 - **User Experience**: Seamless recording, automatic processing, real-time updates
 
-This architecture ensures data integrity, canonical compliance, and optimal user experience throughout the HRV recording and management lifecycle.
+This architecture ensures data integrity, canonical compliance, and optimal user experience throughout the Lumenis recording and management lifecycle.

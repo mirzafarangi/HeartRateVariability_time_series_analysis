@@ -1,11 +1,28 @@
-# HRV Brain API Blueprint & Documentation
+# Lumenis API Blueprint & Documentation
 
 **Version:** 5.4.0 PRODUCTION  
 **Database:** v4.1 (Trigger-based event allocation)  
 **Status:** Production Ready with Session Validation  
 **Last Updated:** 2025-01-09
 
-## Table of Contents
+> **This document serves as the main README for the Lumenis API project**
+
+## 📚 Related Documentation
+
+This API is the source of truth for the entire Lumenis ecosystem. The following blueprints provide comprehensive documentation for different aspects of the system:
+
+### Architecture Blueprints
+- **[iOS App Architecture](./blueprint_ios.md)** - Complete iOS app architecture, authentication system, and data flows
+- **[Event ID System](./blueprint_eventId.md)** - Detailed specification of the event ID allocation and management system
+- **[Recording Flow](./blueprint_recording.md)** - Canonical tagging, recording flow, and database integration specification
+
+### Integration Testing
+- **[DB-API Consistency Test](./test_integration_db_api.sh)** - Tests consistency between database architecture and API implementation
+- **[iOS-API Consistency Test](./test_integration_ios_api.sh)** - Tests consistency between iOS app architecture and API contracts
+
+> **Note:** The API serves as the source of truth for all architectural decisions and data contracts.
+
+## 📖 Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
 2. [Canonical Data Model](#2-canonical-data-model)
@@ -28,7 +45,7 @@
 graph LR
     iOS[iOS App] --> API[Flask API<br/>Railway]
     API --> DB[(Supabase<br/>PostgreSQL)]
-    API --> Metrics[HRV Metrics<br/>Calculator]
+    API --> Metrics[Lumenis Metrics<br/>Calculator]
 ```
 
 ### Component Responsibilities
@@ -43,7 +60,7 @@ graph LR
 - **Backend API (Flask on Railway)**
   - Validates canonical tag/subtag/event_id rules
   - **NEW:** Validates session duration against RR intervals
-  - Calculates 9 HRV metrics per session
+  - Calculates 9 physiological metrics per session
   - Writes to Supabase using service role (bypasses RLS)
   - Provides analytics endpoints with plot-ready data
   - Returns detailed validation reports with each upload
@@ -87,7 +104,7 @@ Sleep sessions:     event_id = 0 (DB auto-assigns) OR > 0 (explicit)
 - **Optional**: Call allocator endpoint for explicit ID
 - **Multi-device safety**: Save returned event_id for interval_2+
 
-### HRV Metrics (9 Canonical)
+### Physiological Metrics (9 Canonical)
 
 ```python
 {
@@ -151,7 +168,7 @@ Detailed health with database connectivity.
 #### POST `/api/v1/sessions`
 #### POST `/api/v1/sessions/upload` (alias)
 
-Upload an HRV session with canonical tags.
+Upload a Lumenis session with canonical tags.
 
 **Headers:**
 - `Content-Type: application/json`
@@ -326,7 +343,7 @@ Experiment protocol analysis.
 ```sql
 -- Core tables
 public.profiles       -- User profiles
-public.sessions       -- HRV session data
+public.sessions       -- Lumenis session data
 public.sleep_event_counter  -- Event ID allocation
 
 -- Key columns in sessions
@@ -340,7 +357,7 @@ recorded_at           TIMESTAMPTZ
 duration_minutes      INTEGER
 rr_intervals          DOUBLE PRECISION[]
 rr_count              INTEGER
--- 9 HRV metrics
+-- 9 physiological metrics
 mean_hr, mean_rr, rmssd, sdnn, pnn50, cv_rr, defa, sd2_sd1
 ```
 
@@ -400,7 +417,7 @@ duration_consistency: iOS duration must match RR intervals (±5s tolerance)
 |--------|---------|---------|  
 | 400 | Validation failed | Invalid tag/subtag, duration mismatch |
 | 409 | Duplicate session | Session ID exists |
-| 422 | HRV calculation failed | Invalid RR data |
+| 422 | Metrics calculation failed | Invalid RR data |
 | 500 | Server error | Database connection failed |
 
 ### Validation Report Structure
@@ -481,7 +498,7 @@ PORT=5000  # Railway assigns
 project/
 ├── app.py                # API v5.4.0
 ├── database_config.py    # Connection management
-├── hrv_metrics.py       # HRV calculations
+├── hrv_metrics.py       # Physiological calculations
 ├── session_validator.py  # Duration/RR validation module
 ├── .env.railway         # Environment variables
 ├── requirements.txt     # Dependencies
@@ -586,6 +603,24 @@ GET /api/v1/analytics/day-load?user_id=xxx&metric=rmssd&min_hours=12&max_hours=1
 
 ## 10. Quick Reference
 
+### Related Documentation Links
+
+#### Architecture Documents
+- [iOS App Blueprint](./blueprint_ios.md) - Complete iOS architecture and implementation details
+- [Event ID Blueprint](./blueprint_eventId.md) - Event ID allocation system specification
+- [Recording Blueprint](./blueprint_recording.md) - Recording flow and canonical tagging rules
+
+#### Testing & Validation
+- [DB-API Integration Test](./test_integration_db_api.sh) - Validates database and API consistency
+- [iOS-API Integration Test](./test_integration_ios_api.sh) - Validates iOS and API consistency
+
+#### Deployment & Configuration
+- [Railway Configuration](./railway.json) - Railway deployment settings
+- [Nixpacks Configuration](./nixpacks.toml) - Build configuration for Railway
+- [Environment Template](./.env.railway) - Environment variables template
+
+> **Remember:** This API blueprint serves as the authoritative source for all system contracts and behaviors.
+
 ### Canonical Tags
 
 ```python
@@ -615,7 +650,7 @@ experiment:  ^experiment_(single|protocol_[a-z0-9_]+)$
 201: Created (new session)
 400: Bad Request (validation error)
 409: Conflict (duplicate with different data)
-422: Unprocessable (HRV calc failed)
+422: Unprocessable (Metrics calc failed)
 500: Server Error
 ```
 

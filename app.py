@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HRV Brain Canonical API v5.3.1
+Lumenis Canonical API v5.3.1
 Production-ready Flask API fully compatible with DB v4.1
 
 Version: 5.3.1 PRODUCTION
@@ -26,6 +26,7 @@ import logging
 import hashlib
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+from collections import defaultdict
 import uuid
 import hashlib
 import json
@@ -1116,14 +1117,16 @@ def internal_error(error):
 
 if __name__ == '__main__':
     import sys
-    port = 5000
-    # Check for --port argument
+    # Railway provides PORT environment variable
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Check for --port argument (for local development)
     for i, arg in enumerate(sys.argv):
         if arg == '--port' and i + 1 < len(sys.argv):
             port = int(sys.argv[i + 1])
     
     initialize_connection_pool()
-    logger.info(f"Starting HRV Brain API v{API_VERSION} on port {port}")
+    logger.info(f"Starting Lumenis API v{API_VERSION} on port {port}")
     logger.info(f"Debug mode: {app.debug}")
     logger.info(f"Database: {db_config.host}:{db_config.port}/{db_config.database}")
     logger.info("Canonical tag system enforced with strict validation")

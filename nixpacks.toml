@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ['python311', 'gcc', 'postgresql']  # Added gcc for psycopg2, postgresql for client libs
+nixPkgs = ['python311', 'gcc', 'postgresql', 'bash']  # Added bash for start.sh script
 
 [phases.install]
 cmds = [
@@ -12,6 +12,7 @@ cmds = [
 [phases.build]
 cmds = [
     'echo "🔨 Build phase starting"',
+    'chmod +x start.sh',
     'python3 -c "import psycopg2; print(\"✅ psycopg2 imported successfully\")"',
     'python3 -c "import numpy; print(\"✅ numpy imported successfully\")"',
     'python3 -c "from app import app; print(\"✅ App imported successfully\")"',
@@ -19,8 +20,9 @@ cmds = [
 ]
 
 [start]
-cmd = 'gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --access-logfile - --error-logfile -'
+cmd = 'bash start.sh'
 
 [variables]
 PATH = '/opt/venv/bin:$PATH'
 PYTHONUNBUFFERED = '1'  # Ensure logs appear immediately
+PYTHONDONTWRITEBYTECODE = '1'  # Prevent .pyc files
