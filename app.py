@@ -1018,8 +1018,8 @@ def upload_session():
                     logger.info(f"Session {session_id} inserted successfully with event_id={assigned_event_id}")
                     
                     response = {
-                        'session_id': result['session_id'],
-                        'event_id': result['event_id'],  # Return for multi-device safety
+                        'session_id': result[0],  # result is a tuple (session_id, event_id)
+                        'event_id': result[1],     # Return for multi-device safety
                         'message': 'Session uploaded successfully',
                         'metrics': metrics,
                         'validation_report': validation_report,  # Include validation details
