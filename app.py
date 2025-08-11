@@ -813,6 +813,7 @@ def analytics_baseline():
                 'n_points_requested': n,
                 'n_points_actual': n_points_actual,
                 'total_sessions': total_sessions,
+                'max_sessions': max_sessions if max_sessions else 300,  # iOS expects this field
                 'max_sessions_applied': max_sessions if max_sessions else None,
                 'updated_at': datetime.now(timezone.utc).isoformat(),
                 'fixed_baseline': fixed_baseline,
