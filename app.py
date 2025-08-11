@@ -726,10 +726,23 @@ def analytics_baseline():
                         rolling_mean = float(rolling_entry['rolling_avg'])
                         rolling_sd = float(rolling_entry['rolling_sd']) if rolling_entry.get('rolling_sd') else 0
                         
+                        # Calculate MAD as 1.4826 * SD (consistent with fixed_baseline)
+                        rolling_mad = rolling_sd * 1.4826
+                        
+                        # Get count from rolling_entry or use window_size
+                        rolling_count = rolling_entry.get('count', n)
+                        
+                        # For rolling stats, median is typically same as mean for small windows
+                        # This matches the fixed_baseline approach
+                        rolling_median = rolling_mean
+                        
                         rolling_stats[metric] = {
                             'window_size': n,
                             'mean': round(rolling_mean, 2),
+                            'median': round(rolling_median, 2),  # Added for iOS compatibility
                             'sd': float(round(rolling_sd, 2)),  # Ensure float type
+                            'mad': round(rolling_mad, 2),  # Added for iOS compatibility
+                            'count': rolling_count,  # Added for iOS compatibility
                             'mean_minus_1sd': round(rolling_mean - rolling_sd, 2),
                             'mean_plus_1sd': round(rolling_mean + rolling_sd, 2),
                             'mean_minus_2sd': round(rolling_mean - 2 * rolling_sd, 2),
