@@ -507,16 +507,15 @@ def allocate_sleep_event_id():
 
 @app.route('/api/v1/analytics/baseline', methods=['GET'])
 def analytics_baseline():
-    """Get baseline analytics points"""
+    """
+    Provide all inputs needed to render the Baseline tab for wake_check sessions:
+    - Fixed baseline (m-point) statistics and constant bands per metric
+    - Dynamic baseline (n-point rolling) per-session values + rolling stats per metric
+    - Light, ready-to-plot structure (no client computation required beyond drawing)
+    """
     try:
+        # Extract and validate parameters
         user_id = request.args.get('user_id')
-        metric = request.args.get('metric', 'rmssd')
-        
-        # UPDATED: Support both 'window' (new) and 'points' (backward compat)
-        window = request.args.get('window', type=int)
-        if window is None:
-            window = request.args.get('points', 100, type=int)
-        
         if not user_id:
             return jsonify({'error': 'user_id is required'}), 400
         
@@ -524,41 +523,309 @@ def analytics_baseline():
         if not ok:
             return jsonify({'error': err}), 400
         
-        # UPDATED: Validate against full metric list
-        if metric not in VALID_METRICS:
-            return jsonify({'error': f'Invalid metric. Must be one of: {", ".join(VALID_METRICS)}'}), 400
+        # Parse m (fixed baseline window)
+        m = request.args.get('m', 14, type=int)
+        if m < 3 or m > 200:
+            return jsonify({'error': 'm must be between 3 and 200'}), 400
         
-        # UPDATED: Use p_window for DB v4.0 compatibility
-        params = {
-            'p_user_id': user_id,
-            'p_metric': metric,
-            'p_window': window  # Changed from p_points
-        }
+        # Parse n (rolling window size)
+        n = request.args.get('n', 7, type=int)
+        if n < 2 or n > 200:
+            return jsonify({'error': 'n must be between 2 and 200'}), 400
+        
+        # Parse metrics (CSV list)
+        metrics_param = request.args.get('metrics', 'rmssd,sdnn,sd2_sd1,mean_hr')
+        requested_metrics = [m.strip().lower() for m in metrics_param.split(',')]
+        
+        # Filter valid metrics and track warnings
+        valid_metrics = []
+        warnings = []
+        for metric in requested_metrics:
+            if metric in VALID_METRICS:
+                valid_metrics.append(metric)
+            else:
+                warnings.append(f"metrics[{metric}] ignored (not in VALID_METRICS)")
+        
+        if not valid_metrics:
+            return jsonify({'error': 'No valid metrics provided'}), 400
+        
+        # Parse max_sessions (optional payload control)
+        max_sessions = request.args.get('max_sessions', type=int)
+        if max_sessions is not None and max_sessions < 10:
+            warnings.append(f"max_sessions={max_sessions} is below recommended minimum of 10")
+        
+        # Parse timezone (for formatting hints only)
+        tz = request.args.get('tz', 'UTC')
         
         conn = None
         try:
             conn = get_db_connection()
-            results = call_sql_named(conn, 'public.fn_baseline_points', params)
             
-            # Convert datetime fields and cast decimals to float
-            for row in results:
-                if row.get('t'):
-                    row['timestamp'] = row.pop('t').isoformat()
-                if row.get('value') is not None:
-                    row['value'] = float(row['value'])
-                if row.get('rolling_avg') is not None:
-                    row['rolling_avg'] = float(row['rolling_avg'])
-                if row.get('rolling_sd') is not None:
-                    row['rolling_sd'] = float(row['rolling_sd'])
+            # Get all wake_check sessions for the user
+            sessions_query = """
+                SELECT 
+                    session_id,
+                    recorded_at,
+                    duration_minutes,
+                    subtag,
+                    rmssd, sdnn, pnn50, cv_rr, defa,
+                    sd2_sd1, mean_hr, mean_rr
+                FROM public.sessions
+                WHERE user_id = %s AND tag = 'wake_check'
+                ORDER BY recorded_at ASC
+            """
             
-            return jsonify({
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(sessions_query, (user_id,))
+                all_sessions = cursor.fetchall()
+            
+            if not all_sessions:
+                return jsonify({'error': 'No wake_check sessions found for user'}), 404
+            
+            total_sessions = len(all_sessions)
+            
+            # Compute fixed baseline for each metric
+            fixed_baseline = {}
+            
+            for metric in valid_metrics:
+                # Get last m valid values for this metric
+                metric_values = []
+                for session in reversed(all_sessions):  # Start from most recent
+                    if session[metric] is not None:
+                        metric_values.append(float(session[metric]))
+                        if len(metric_values) >= m:
+                            break
+                
+                metric_values.reverse()  # Back to chronological order
+                
+                if not metric_values:
+                    warnings.append(f"{metric}: no valid values found")
+                    fixed_baseline[metric] = {
+                        'count': 0,
+                        'mean': None,
+                        'sd': None,
+                        'median': None,
+                        'sd_median': None,
+                        'mean_minus_1sd': None,
+                        'mean_plus_1sd': None,
+                        'mean_minus_2sd': None,
+                        'mean_plus_2sd': None,
+                        'median_minus_1sd': None,
+                        'median_plus_1sd': None,
+                        'median_minus_2sd': None,
+                        'median_plus_2sd': None,
+                        'min': None,
+                        'max': None,
+                        'range': None
+                    }
+                    continue
+                
+                # Calculate statistics
+                import statistics
+                count = len(metric_values)
+                mean = statistics.mean(metric_values)
+                sd = statistics.pstdev(metric_values) if count > 1 else 0
+                median = statistics.median(metric_values)
+                
+                # Calculate MAD (Median Absolute Deviation) for sd_median
+                mad = statistics.median([abs(x - median) for x in metric_values])
+                sd_median = mad * 1.4826  # Scale factor for normal distribution
+                
+                # Calculate bands
+                mean_minus_1sd = mean - sd
+                mean_plus_1sd = mean + sd
+                mean_minus_2sd = mean - 2 * sd
+                mean_plus_2sd = mean + 2 * sd
+                
+                median_minus_1sd = median - sd_median
+                median_plus_1sd = median + sd_median
+                median_minus_2sd = median - 2 * sd_median
+                median_plus_2sd = median + 2 * sd_median
+                
+                min_val = min(metric_values)
+                max_val = max(metric_values)
+                range_val = max_val - min_val
+                
+                if count < 5:
+                    warnings.append(f"{metric}: fixed bands hidden (count < 5)")
+                
+                fixed_baseline[metric] = {
+                    'count': count,
+                    'mean': round(mean, 2),
+                    'sd': round(sd, 2),
+                    'median': round(median, 2),
+                    'sd_median': round(sd_median, 2),
+                    'mean_minus_1sd': round(mean_minus_1sd, 2),
+                    'mean_plus_1sd': round(mean_plus_1sd, 2),
+                    'mean_minus_2sd': round(mean_minus_2sd, 2),
+                    'mean_plus_2sd': round(mean_plus_2sd, 2),
+                    'median_minus_1sd': round(median_minus_1sd, 2),
+                    'median_plus_1sd': round(median_plus_1sd, 2),
+                    'median_minus_2sd': round(median_minus_2sd, 2),
+                    'median_plus_2sd': round(median_plus_2sd, 2),
+                    'min': round(min_val, 2),
+                    'max': round(max_val, 2),
+                    'range': round(range_val, 2)
+                }
+            
+            # Get dynamic baseline using fn_baseline_points for each metric
+            dynamic_data = {}
+            
+            for metric in valid_metrics:
+                params = {
+                    'p_user_id': user_id,
+                    'p_metric': metric,
+                    'p_window': n
+                }
+                
+                try:
+                    results = call_sql_named(conn, 'public.fn_baseline_points', params)
+                    dynamic_data[metric] = results
+                except Exception as e:
+                    logger.error(f"Error calling fn_baseline_points for {metric}: {str(e)}")
+                    warnings.append(f"{metric}: rolling calculation failed")
+                    dynamic_data[metric] = []
+            
+            # Build dynamic_baseline array with all metrics combined
+            dynamic_baseline = []
+            session_index = 0
+            
+            for session in all_sessions:
+                session_index += 1
+                session_id = session['session_id']
+                timestamp = session['recorded_at']
+                
+                # Build metrics object for this session
+                metrics_obj = {}
+                rolling_stats = {}
+                trends = {}
+                
+                for metric in valid_metrics:
+                    # Get raw value
+                    raw_value = session[metric]
+                    if raw_value is not None:
+                        metrics_obj[metric] = float(raw_value)
+                    else:
+                        metrics_obj[metric] = None
+                    
+                    # Find rolling stats for this timestamp
+                    rolling_entry = None
+                    for entry in dynamic_data.get(metric, []):
+                        if entry['t'] == timestamp:
+                            rolling_entry = entry
+                            break
+                    
+                    if rolling_entry and rolling_entry.get('rolling_avg') is not None:
+                        rolling_mean = float(rolling_entry['rolling_avg'])
+                        rolling_sd = float(rolling_entry['rolling_sd']) if rolling_entry.get('rolling_sd') else 0
+                        
+                        rolling_stats[metric] = {
+                            'window_size': n,
+                            'mean': round(rolling_mean, 2),
+                            'sd': float(round(rolling_sd, 2)),  # Ensure float type
+                            'mean_minus_1sd': round(rolling_mean - rolling_sd, 2),
+                            'mean_plus_1sd': round(rolling_mean + rolling_sd, 2),
+                            'mean_minus_2sd': round(rolling_mean - 2 * rolling_sd, 2),
+                            'mean_plus_2sd': round(rolling_mean + 2 * rolling_sd, 2)
+                        }
+                        
+                        # Calculate trends if we have values
+                        if metrics_obj[metric] is not None and fixed_baseline[metric]['mean'] is not None:
+                            value = metrics_obj[metric]
+                            fixed_mean = fixed_baseline[metric]['mean']
+                            fixed_sd = fixed_baseline[metric]['sd']
+                            
+                            # vs fixed baseline
+                            delta_vs_fixed = value - fixed_mean
+                            pct_vs_fixed = (100 * delta_vs_fixed / fixed_mean) if fixed_mean != 0 else None
+                            z_fixed = (delta_vs_fixed / fixed_sd) if fixed_sd > 0 else None
+                            
+                            # vs rolling baseline
+                            delta_vs_rolling = value - rolling_mean
+                            pct_vs_rolling = (100 * delta_vs_rolling / rolling_mean) if rolling_mean != 0 else None
+                            z_rolling = (delta_vs_rolling / rolling_sd) if rolling_sd > 0 else None
+                            
+                            # Direction
+                            if pct_vs_fixed is not None and abs(pct_vs_fixed) < 5:
+                                direction = 'stable'
+                            elif delta_vs_fixed > 0:
+                                direction = 'above_baseline'
+                            else:
+                                direction = 'below_baseline'
+                            
+                            # Significance
+                            z_score = z_fixed if z_fixed is not None else z_rolling
+                            if z_score is None:
+                                significance = 'not_significant'
+                            elif abs(z_score) >= 2.58:
+                                significance = 'highly_significant'
+                            elif abs(z_score) >= 1.96:
+                                significance = 'significant'
+                            elif abs(z_score) >= 1.64:
+                                significance = 'marginally_significant'
+                            else:
+                                significance = 'not_significant'
+                            
+                            trends[metric] = {
+                                'delta_vs_fixed': round(delta_vs_fixed, 2) if delta_vs_fixed is not None else None,
+                                'pct_vs_fixed': round(pct_vs_fixed, 1) if pct_vs_fixed is not None else None,
+                                'delta_vs_rolling': round(delta_vs_rolling, 2) if delta_vs_rolling is not None else None,
+                                'pct_vs_rolling': round(pct_vs_rolling, 1) if pct_vs_rolling is not None else None,
+                                'z_fixed': round(z_fixed, 2) if z_fixed is not None else None,
+                                'z_rolling': round(z_rolling, 2) if z_rolling is not None else None,
+                                'direction': direction,
+                                'significance': significance
+                            }
+                
+                # Build session entry
+                session_entry = {
+                    'session_id': session_id,
+                    'timestamp': timestamp.isoformat(),
+                    'duration_minutes': session['duration_minutes'],
+                    'session_index': session_index,
+                    'metrics': metrics_obj,
+                    'rolling_stats': rolling_stats,
+                    'trends': trends,
+                    'flags': [],
+                    'tags': [session['subtag']] if session['subtag'] else []
+                }
+                
+                dynamic_baseline.append(session_entry)
+            
+            # Apply max_sessions truncation if specified
+            if max_sessions and len(dynamic_baseline) > max_sessions:
+                dynamic_baseline = dynamic_baseline[-max_sessions:]
+                warnings.append(f"max_sessions={max_sessions} applied (payload truncated)")
+            
+            # Calculate actual m and n points
+            m_points_actual = min(m, max(fixed_baseline[metric]['count'] for metric in valid_metrics if fixed_baseline[metric]['count'] is not None))
+            n_points_actual = n  # Will be actual window size used
+            
+            # Build response
+            response = {
                 'status': 'success',
+                'api_version': '5.3.1',
                 'user_id': user_id,
-                'metric': metric,
-                'window': window,  # Return both for clarity
-                'points': window,  # Backward compat
-                'results': results
-            }), 200
+                'tag': 'wake_check',
+                'metrics': valid_metrics,
+                'm_points_requested': m,
+                'm_points_actual': m_points_actual,
+                'n_points_requested': n,
+                'n_points_actual': n_points_actual,
+                'total_sessions': total_sessions,
+                'max_sessions_applied': max_sessions if max_sessions else None,
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+                'fixed_baseline': fixed_baseline,
+                'dynamic_baseline': dynamic_baseline,
+                'warnings': warnings if warnings else [],
+                'notes': {
+                    'method': 'SD_median computed as MAD × 1.4826',
+                    'bands': '±1 SD and ±2 SD envelopes for fixed mean and rolling mean',
+                    'insufficient_band_rule': 'Bands hidden for metrics with <5 points'
+                }
+            }
+            
+            return jsonify(response), 200
             
         except Exception as e:
             logger.error(f"Database error in baseline analytics: {str(e)}")
