@@ -590,13 +590,16 @@ def analytics_baseline():
             for metric in valid_metrics:
                 # Get last m valid values for this metric
                 metric_values = []
+                session_ids = []  # Track session IDs for iOS
                 for session in reversed(all_sessions):  # Start from most recent
                     if session[metric] is not None:
                         metric_values.append(float(session[metric]))
+                        session_ids.append(session['session_id'])
                         if len(metric_values) >= m:
                             break
                 
                 metric_values.reverse()  # Back to chronological order
+                session_ids.reverse()  # Keep session IDs in same order
                 
                 if not metric_values:
                     warnings.append(f"{metric}: no valid values found")
@@ -605,6 +608,7 @@ def analytics_baseline():
                         'mean': None,
                         'sd': None,
                         'median': None,
+                        'mad': None,  # iOS expects 'mad' field
                         'sd_median': None,
                         'mean_minus_1sd': None,
                         'mean_plus_1sd': None,
@@ -616,7 +620,8 @@ def analytics_baseline():
                         'median_plus_2sd': None,
                         'min': None,
                         'max': None,
-                        'range': None
+                        'range': None,
+                        'session_ids': []  # iOS expects session_ids array
                     }
                     continue
                 
@@ -654,6 +659,7 @@ def analytics_baseline():
                     'mean': round(mean, 2),
                     'sd': round(sd, 2),
                     'median': round(median, 2),
+                    'mad': round(mad, 2),  # iOS expects 'mad' field
                     'sd_median': round(sd_median, 2),
                     'mean_minus_1sd': round(mean_minus_1sd, 2),
                     'mean_plus_1sd': round(mean_plus_1sd, 2),
@@ -665,7 +671,8 @@ def analytics_baseline():
                     'median_plus_2sd': round(median_plus_2sd, 2),
                     'min': round(min_val, 2),
                     'max': round(max_val, 2),
-                    'range': round(range_val, 2)
+                    'range': round(range_val, 2),
+                    'session_ids': session_ids  # iOS expects session_ids array
                 }
             
             # Get dynamic baseline using fn_baseline_points for each metric
@@ -819,11 +826,11 @@ def analytics_baseline():
                 'fixed_baseline': fixed_baseline,
                 'dynamic_baseline': dynamic_baseline,
                 'warnings': warnings if warnings else [],
-                'notes': {
-                    'method': 'SD_median computed as MAD × 1.4826',
-                    'bands': '±1 SD and ±2 SD envelopes for fixed mean and rolling mean',
-                    'insufficient_band_rule': 'Bands hidden for metrics with <5 points'
-                }
+                'notes': [
+                    'SD_median computed as MAD × 1.4826',
+                    '±1 SD and ±2 SD envelopes for fixed mean and rolling mean',
+                    'Bands hidden for metrics with <5 points'
+                ]
             }
             
             return jsonify(response), 200
