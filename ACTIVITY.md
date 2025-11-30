@@ -13,3 +13,6 @@ This file tracks ongoing development and maintenance activities.
 ### 2025-11-30 - Implement frequency domain HRV analysis with Welch method
 Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
 
+### 2025-11-30 - Add comprehensive guide for HRV metrics interpretation
+Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
+
