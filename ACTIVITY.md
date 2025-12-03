@@ -34,3 +34,6 @@ Updated documentation with clinical significance of each metric. Included refere
 ### 2025-12-03 - Add comprehensive guide for HRV metrics interpretation
 Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
 
+### 2025-12-03 - Add comprehensive guide for HRV metrics interpretation
+Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
+
