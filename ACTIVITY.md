@@ -40,3 +40,6 @@ Updated documentation with clinical significance of each metric. Included refere
 ### 2025-12-03 - Implement frequency domain HRV analysis with Welch method
 Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
 
+### 2025-12-05 - Implement frequency domain HRV analysis with Welch method
+Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
+
