@@ -52,3 +52,6 @@ Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 9
 ### 2025-12-08 - Add comprehensive guide for HRV metrics interpretation
 Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
 
+### 2025-12-11 - Implement frequency domain HRV analysis with Welch method
+Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
+
