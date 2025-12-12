@@ -58,3 +58,6 @@ Added power spectral density estimation for LF/HF ratio calculation. Enhanced au
 ### 2025-12-12 - Implement frequency domain HRV analysis with Welch method
 Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
 
+### 2025-12-13 - Develop non-linear HRV metrics including entropy measures
+Integrated sample entropy and DFA for complexity analysis. Improved cardiovascular health assessment accuracy.
+
