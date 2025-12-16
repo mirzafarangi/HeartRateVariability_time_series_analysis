@@ -67,3 +67,6 @@ Integrated sample entropy and DFA for complexity analysis. Improved cardiovascul
 ### 2025-12-14 - Develop non-linear HRV metrics including entropy measures
 Integrated sample entropy and DFA for complexity analysis. Improved cardiovascular health assessment accuracy.
 
+### 2025-12-16 - Implement frequency domain HRV analysis with Welch method
+Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
+
