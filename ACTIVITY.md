@@ -82,3 +82,6 @@ Integrated sample entropy and DFA for complexity analysis. Improved cardiovascul
 ### 2025-12-19 - Optimize R-peak detection algorithm for noisy ECG signals
 Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 99.2% on challenging datasets.
 
+### 2025-12-20 - Add comprehensive guide for HRV metrics interpretation
+Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
+
