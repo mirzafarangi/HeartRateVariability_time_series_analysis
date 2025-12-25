@@ -94,3 +94,6 @@ Integrated sample entropy and DFA for complexity analysis. Improved cardiovascul
 ### 2025-12-23 - Develop non-linear HRV metrics including entropy measures
 Integrated sample entropy and DFA for complexity analysis. Improved cardiovascular health assessment accuracy.
 
+### 2025-12-25 - Develop non-linear HRV metrics including entropy measures
+Integrated sample entropy and DFA for complexity analysis. Improved cardiovascular health assessment accuracy.
+
