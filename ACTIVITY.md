@@ -103,3 +103,6 @@ Integrated sample entropy and DFA for complexity analysis. Improved cardiovascul
 ### 2025-12-26 - Add comprehensive guide for HRV metrics interpretation
 Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
 
+### 2025-12-27 - Implement frequency domain HRV analysis with Welch method
+Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
+
