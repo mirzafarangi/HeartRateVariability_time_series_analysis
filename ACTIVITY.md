@@ -121,3 +121,6 @@ Updated documentation with clinical significance of each metric. Included refere
 ### 2025-12-31 - Optimize R-peak detection algorithm for noisy ECG signals
 Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 99.2% on challenging datasets.
 
+### 2026-01-01 - Add comprehensive guide for HRV metrics interpretation
+Updated documentation with clinical significance of each metric. Included reference ranges and cardiovascular health indicators.
+
