@@ -133,3 +133,6 @@ Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 9
 ### 2026-01-04 - Optimize R-peak detection algorithm for noisy ECG signals
 Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 99.2% on challenging datasets.
 
+### 2026-01-05 - Implement frequency domain HRV analysis with Welch method
+Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
+
