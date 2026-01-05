@@ -136,3 +136,6 @@ Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 9
 ### 2026-01-05 - Implement frequency domain HRV analysis with Welch method
 Added power spectral density estimation for LF/HF ratio calculation. Enhanced autonomic nervous system assessment capabilities.
 
+### 2026-01-05 - Develop non-linear HRV metrics including entropy measures
+Integrated sample entropy and DFA for complexity analysis. Improved cardiovascular health assessment accuracy.
+
