@@ -145,3 +145,6 @@ Added power spectral density estimation for LF/HF ratio calculation. Enhanced au
 ### 2026-01-06 - Optimize R-peak detection algorithm for noisy ECG signals
 Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 99.2% on challenging datasets.
 
+### 2026-01-06 - Optimize R-peak detection algorithm for noisy ECG signals
+Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 99.2% on challenging datasets.
+
