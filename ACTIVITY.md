@@ -163,3 +163,6 @@ Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 9
 ### 2026-01-09 - Optimize R-peak detection algorithm for noisy ECG signals
 Enhanced preprocessing with adaptive filtering. Improved detection accuracy to 99.2% on challenging datasets.
 
+### 2026-01-09 - Develop non-linear HRV metrics including entropy measures
+Integrated sample entropy and DFA for complexity analysis. Improved cardiovascular health assessment accuracy.
+
